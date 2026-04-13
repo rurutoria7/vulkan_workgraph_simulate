@@ -1,0 +1,77 @@
+#version 450
+
+layout(local_size_x = 32) in;
+
+struct Task {
+    uint payload[4];
+};
+
+// 增加 coherent 關鍵字確保內存一致性
+layout(std430, binding = 0) buffer ControlBlock {
+    coherent uint head;           // 消費者讀取指標
+    coherent uint tail;           // 生產者寫入指標
+    coherent uint count;          // 當前隊列中的任務數
+    coherent uint stopFlag;       // 終止信號 (1 = 停止)
+    coherent uint processedCount; // 已處理任務總數
+} control;
+
+layout(std430, binding = 1) buffer TaskQueue {
+    Task tasks[];
+} queue;
+
+layout (constant_id = 0) const uint QUEUE_SIZE = 1024;
+
+void main() {
+    uint localId = gl_LocalInvocationID.x;
+    
+    // 初始化 (僅由第一個工作組的第一個線程執行一次)
+    if (gl_GlobalInvocationID.x == 0) {
+        // 這裡不進行重置，交給 Host 端初始化，以防多次 Dispatch 覆蓋
+    }
+
+    // Persistent Loop
+    while (control.stopFlag == 0) {
+        if (localId == 0) {
+            // --- PRODUCER 邏輯 (Thread 0) ---
+            // 如果隊列沒滿，則生產一個任務
+            if (control.count < QUEUE_SIZE) {
+                uint slot = atomicAdd(control.tail, 1) % QUEUE_SIZE;
+                
+                // 寫入任務數據
+                queue.tasks[slot].payload[0] = control.processedCount + 100; // 模擬數據
+                
+                // 增加隊列計數
+                atomicAdd(control.count, 1);
+                
+                // 確保寫入對其他線程可見
+                memoryBarrierBuffer();
+            }
+        } else {
+            // --- CONSUMER 邏輯 (Threads 1-31) ---
+            // 如果隊列有東西，則嘗試領取
+            if (control.count > 0) {
+                // 這裡需要非常小心，先檢查 count 再嘗試 atomic 取任務
+                // 為簡單起見，初版 POC 使用簡單的原子操作
+                uint currentCount = atomicAdd(control.count, -1);
+                
+                if (int(currentCount) > 0) {
+                    uint slot = atomicAdd(control.head, 1) % QUEUE_SIZE;
+                    
+                    // 模擬處理任務 (讀取數據)
+                    uint data = queue.tasks[slot].payload[0];
+                    
+                    // 增加處理完成計數
+                    atomicAdd(control.processedCount, 1);
+                    
+                    memoryBarrierBuffer();
+                } else {
+                    // 如果剛好被搶走了，把 count 加回去
+                    atomicAdd(control.count, 1);
+                }
+            }
+        }
+        
+        // 防止過度佔用匯流排，加入微小的延遲（視 GPU 架構而定）
+        // 在這個初版中，我們直接依賴 GPU 調度
+    }
+}
