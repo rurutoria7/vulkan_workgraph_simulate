@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm list:*)",
+      "Bash(npm install:*)",
+      "Bash(node:*)",
+      "Bash(python add_notes.py)",
+      "Bash(python -c ':*)",
+      "Bash(python remove_slide.py)",
+      "Bash(glslangValidator -V shaders/glsl/workgraph_poc/headless.comp -o shaders/workgraph_poc/headless.comp.spv)",
+      "Bash(cmake --build build --target workgraph_poc --config Release)",
+      "Bash(build/bin/Release/workgraph_poc.exe)"
+    ]
+  }
+}
