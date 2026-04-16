@@ -2,76 +2,161 @@
 
 layout(local_size_x = 32) in;
 
-struct Task {
-    uint payload[4];
-};
+struct Task { uint payload[6]; };
+struct QueueControl { uint head; uint tail; uint count; };
 
-// 增加 coherent 關鍵字確保內存一致性
-layout(std430, binding = 0) buffer ControlBlock {
-    coherent uint head;           // 消費者讀取指標
-    coherent uint tail;           // 生產者寫入指標
-    coherent uint count;          // 當前隊列中的任務數
-    coherent uint stopFlag;       // 終止信號 (1 = 停止)
-    coherent uint processedCount; // 已處理任務總數
+layout(std430, binding = 0) coherent buffer ControlBlock {
+    QueueControl q1;
+    QueueControl q2;
+    uint stopFlag;
+    uint totalProcessed;
+    uint vertexCount;
+    uint seedDone;
 } control;
 
-layout(std430, binding = 1) buffer TaskQueue {
-    Task tasks[];
-} queue;
+layout(std430, binding = 1) coherent buffer Queue1 { Task tasks[]; } queue1;
+layout(std430, binding = 2) coherent buffer Queue2 { Task tasks[]; } queue2;
+layout(std430, binding = 3) coherent buffer OutputVertices { vec2 vertices[]; } output_vb;
 
-layout (constant_id = 0) const uint QUEUE_SIZE = 1024;
+layout (constant_id = 0) const uint QUEUE_SIZE = 4096;
+layout (constant_id = 1) const uint MAX_DEPTH = 4;
+layout (constant_id = 2) const uint NODE_C_START = 6;
+
+// payload[5] is a per-slot ready flag (0=empty, 1=ready)
+// All accesses use atomics for cross-CU visibility on RDNA 3
+
+bool pushQ1(uint p0, uint p1, uint p2, uint p3, uint p4) {
+    while (control.stopFlag == 0) {
+        uint cur = control.q1.count;
+        if (cur < QUEUE_SIZE) {
+            if (atomicCompSwap(control.q1.count, cur, cur + 1) == cur) {
+                uint slot = atomicAdd(control.q1.tail, 1) % QUEUE_SIZE;
+                queue1.tasks[slot].payload[0] = p0;
+                queue1.tasks[slot].payload[1] = p1;
+                queue1.tasks[slot].payload[2] = p2;
+                queue1.tasks[slot].payload[3] = p3;
+                queue1.tasks[slot].payload[4] = p4;
+                memoryBarrierBuffer();
+                atomicExchange(queue1.tasks[slot].payload[5], 1u);
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+bool pushQ2(uint p0, uint p1, uint p2, uint p3, uint p4) {
+    while (control.stopFlag == 0) {
+        uint cur = control.q2.count;
+        if (cur < QUEUE_SIZE) {
+            if (atomicCompSwap(control.q2.count, cur, cur + 1) == cur) {
+                uint slot = atomicAdd(control.q2.tail, 1) % QUEUE_SIZE;
+                queue2.tasks[slot].payload[0] = p0;
+                queue2.tasks[slot].payload[1] = p1;
+                queue2.tasks[slot].payload[2] = p2;
+                queue2.tasks[slot].payload[3] = p3;
+                queue2.tasks[slot].payload[4] = p4;
+                memoryBarrierBuffer();
+                atomicExchange(queue2.tasks[slot].payload[5], 1u);
+                return true;
+            }
+        }
+    }
+    return false;
+}
 
 void main() {
+    uint wgId = gl_WorkGroupID.x;
     uint localId = gl_LocalInvocationID.x;
-    
-    // 初始化 (僅由第一個工作組的第一個線程執行一次)
-    if (gl_GlobalInvocationID.x == 0) {
-        // 這裡不進行重置，交給 Host 端初始化，以防多次 Dispatch 覆蓋
+
+    if (wgId == 0 && localId == 0) {
+        if (atomicCompSwap(control.seedDone, 0, 1) == 0) {
+            float s = 0.8;
+            float h = s * sqrt(3.0) / 2.0;
+            float ax = 0.0,     ay =  h * 2.0 / 3.0;
+            float bx = -s/2.0,  by = -h / 3.0;
+            float cx =  s/2.0,  cy = -h / 3.0;
+
+            pushQ1(floatBitsToUint(ax), floatBitsToUint(ay),
+                   floatBitsToUint(bx), floatBitsToUint(by), 0);
+            pushQ1(floatBitsToUint(bx), floatBitsToUint(by),
+                   floatBitsToUint(cx), floatBitsToUint(cy), 0);
+            pushQ1(floatBitsToUint(cx), floatBitsToUint(cy),
+                   floatBitsToUint(ax), floatBitsToUint(ay), 0);
+        }
     }
 
-    // Persistent Loop
+    memoryBarrierBuffer();
+
     while (control.stopFlag == 0) {
-        if (localId == 0) {
-            // --- PRODUCER 邏輯 (Thread 0) ---
-            // 如果隊列沒滿，則生產一個任務
-            if (control.count < QUEUE_SIZE) {
-                uint slot = atomicAdd(control.tail, 1) % QUEUE_SIZE;
-                
-                // 寫入任務數據
-                queue.tasks[slot].payload[0] = control.processedCount + 100; // 模擬數據
-                
-                // 增加隊列計數
-                atomicAdd(control.count, 1);
-                
-                // 確保寫入對其他線程可見
-                memoryBarrierBuffer();
+        if (wgId < NODE_C_START) {
+            // --- NODE B: Subdivider ---
+            uint cur = control.q1.count;
+            if (cur > 0) {
+                if (atomicCompSwap(control.q1.count, cur, cur - 1) == cur) {
+                    uint slot = atomicAdd(control.q1.head, 1) % QUEUE_SIZE;
+                    // Spin until ready (atomic CAS: check 1, set 0 atomically)
+                    while (atomicCompSwap(queue1.tasks[slot].payload[5], 1u, 0u) != 1u) {
+                        if (control.stopFlag != 0u) return;
+                    }
+                    float x1 = uintBitsToFloat(queue1.tasks[slot].payload[0]);
+                    float y1 = uintBitsToFloat(queue1.tasks[slot].payload[1]);
+                    float x2 = uintBitsToFloat(queue1.tasks[slot].payload[2]);
+                    float y2 = uintBitsToFloat(queue1.tasks[slot].payload[3]);
+                    uint depth = queue1.tasks[slot].payload[4];
+                    memoryBarrierBuffer();
+
+                    if (depth < MAX_DEPTH) {
+                        float dx = (x2 - x1) / 3.0;
+                        float dy = (y2 - y1) / 3.0;
+                        float kax = x1 + dx;
+                        float kay = y1 + dy;
+                        float kbx = x1 + 2.0 * dx;
+                        float kby = y1 + 2.0 * dy;
+                        float cos60 = 0.5;
+                        float sin60 = 0.8660254037844387;
+                        float kcx = kax + dx * cos60 - dy * sin60;
+                        float kcy = kay + dx * sin60 + dy * cos60;
+
+                        uint nd = depth + 1;
+                        pushQ1(floatBitsToUint(x1),  floatBitsToUint(y1),
+                               floatBitsToUint(kax), floatBitsToUint(kay), nd);
+                        pushQ1(floatBitsToUint(kax), floatBitsToUint(kay),
+                               floatBitsToUint(kcx), floatBitsToUint(kcy), nd);
+                        pushQ1(floatBitsToUint(kcx), floatBitsToUint(kcy),
+                               floatBitsToUint(kbx), floatBitsToUint(kby), nd);
+                        pushQ1(floatBitsToUint(kbx), floatBitsToUint(kby),
+                               floatBitsToUint(x2),  floatBitsToUint(y2),  nd);
+                    } else {
+                        pushQ2(floatBitsToUint(x1), floatBitsToUint(y1),
+                               floatBitsToUint(x2), floatBitsToUint(y2), depth);
+                    }
+                }
             }
         } else {
-            // --- CONSUMER 邏輯 (Threads 1-31) ---
-            // 如果隊列有東西，則嘗試領取
-            if (control.count > 0) {
-                // 這裡需要非常小心，先檢查 count 再嘗試 atomic 取任務
-                // 為簡單起見，初版 POC 使用簡單的原子操作
-                uint currentCount = atomicAdd(control.count, -1);
-                
-                if (int(currentCount) > 0) {
-                    uint slot = atomicAdd(control.head, 1) % QUEUE_SIZE;
-                    
-                    // 模擬處理任務 (讀取數據)
-                    uint data = queue.tasks[slot].payload[0];
-                    
-                    // 增加處理完成計數
-                    atomicAdd(control.processedCount, 1);
-                    
+            // --- NODE C: Writer ---
+            uint cur = control.q2.count;
+            if (cur > 0) {
+                if (atomicCompSwap(control.q2.count, cur, cur - 1) == cur) {
+                    uint slot = atomicAdd(control.q2.head, 1) % QUEUE_SIZE;
+                    // Spin until ready (atomic CAS: check 1, set 0 atomically)
+                    while (atomicCompSwap(queue2.tasks[slot].payload[5], 1u, 0u) != 1u) {
+                        if (control.stopFlag != 0u) return;
+                    }
+                    float x1 = uintBitsToFloat(queue2.tasks[slot].payload[0]);
+                    float y1 = uintBitsToFloat(queue2.tasks[slot].payload[1]);
+                    float x2 = uintBitsToFloat(queue2.tasks[slot].payload[2]);
+                    float y2 = uintBitsToFloat(queue2.tasks[slot].payload[3]);
                     memoryBarrierBuffer();
-                } else {
-                    // 如果剛好被搶走了，把 count 加回去
-                    atomicAdd(control.count, 1);
+
+                    uint base = atomicAdd(control.vertexCount, 2);
+                    output_vb.vertices[base]     = vec2(x1, y1);
+                    output_vb.vertices[base + 1] = vec2(x2, y2);
+                    memoryBarrierBuffer();
+
+                    atomicAdd(control.totalProcessed, 1);
                 }
             }
         }
-        
-        // 防止過度佔用匯流排，加入微小的延遲（視 GPU 架構而定）
-        // 在這個初版中，我們直接依賴 GPU 調度
     }
 }
