@@ -5,12 +5,12 @@
 
 #include "vulkanexamplebase.h"
 
-#define QUEUE_SIZE 16384
-#define MAX_DEPTH 6
+#define MAX_DEPTH 8
+#define EXPECTED_EDGES (3u * (1u << (2u * MAX_DEPTH)))
+#define EXPECTED_VERTICES (EXPECTED_EDGES * 2u)
+#define QUEUE_SIZE EXPECTED_EDGES
 #define NUM_WORKGROUPS 96
 #define NODE_C_START 72
-#define EXPECTED_EDGES (3 * (1 << (2 * MAX_DEPTH)))
-#define EXPECTED_VERTICES (EXPECTED_EDGES * 2)
 
 struct QueueControl {
 	uint32_t head;
