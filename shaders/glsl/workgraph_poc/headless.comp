@@ -21,6 +21,7 @@ layout(std430, binding = 3) coherent buffer OutputVertices { vec2 vertices[]; } 
 layout (constant_id = 0) const uint QUEUE_SIZE = 4096;
 layout (constant_id = 1) const uint MAX_DEPTH = 4;
 layout (constant_id = 2) const uint NODE_C_START = 6;
+layout (constant_id = 3) const uint MAX_DEPTH_EDGES = 768;
 
 // payload[5] is a per-slot ready flag (0=empty, 1=ready)
 // All accesses use atomics for cross-CU visibility on RDNA 3
@@ -115,8 +116,8 @@ void main() {
                         float kby = y1 + 2.0 * dy;
                         float cos60 = 0.5;
                         float sin60 = 0.8660254037844387;
-                        float kcx = kax + dx * cos60 - dy * sin60;
-                        float kcy = kay + dx * sin60 + dy * cos60;
+                        float kcx = kax + dx * cos60 + dy * sin60;
+                        float kcy = kay - dx * sin60 + dy * cos60;
 
                         uint nd = depth + 1;
                         pushQ1(floatBitsToUint(x1),  floatBitsToUint(y1),
@@ -154,7 +155,10 @@ void main() {
                     output_vb.vertices[base + 1] = vec2(x2, y2);
                     memoryBarrierBuffer();
 
-                    atomicAdd(control.totalProcessed, 1);
+                    uint processed = atomicAdd(control.totalProcessed, 1) + 1;
+                    if (processed >= MAX_DEPTH_EDGES) {
+                        atomicExchange(control.stopFlag, 1u);
+                    }
                 }
             }
         }
