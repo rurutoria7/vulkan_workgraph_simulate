@@ -3,9 +3,13 @@
 ## 專案名稱
 Vulkan Persistent Thread Producer-Consumer Network POC
 
-## 研究目標
-1. **了解 persistent thread 的性能損耗**：在 GPU 上以持久線程模式（persistent kernel）模擬 Work Graph 調度行為時，會遇到哪些 scheduling overhead，包括原子操作競爭、記憶體一致性屏障的代價、線程閒置空轉（spin-wait）等。
-2. **量測 on-chip memory 的利用能力**：比較 persistent thread 模式使用 LDS（shared memory）與 execute indirect 模式使用 global memory 時的性能差異，驗證 persistent thread 是否能更有效利用 on-chip 資源來降低調度延遲。
+## 研究定位（更正版）
+
+本研究定位更正為：基於 software 實作盡可能快的 producer-consumer 架構。重點不是單純模仿 D3D Work Graphs 的 API，而是透過實作、profiling 與 metrics 找出瓶頸，並提出可落地的 optimization 方向。
+
+## 研究意義
+
+這能讓 MTK 預先知道：若未來要在 mobile GPU 上實現 producer-consumer，主要瓶頸可能會落在哪裡，例如 atomic contention、global memory traffic、queue pressure、producer/consumer imbalance、memory visibility 與 spin-wait，進而提供 runtime、driver、hardware 的優化方向。
 
 ## 本週工作摘要
 
@@ -115,8 +119,8 @@ Node A (Producer) --[Queue 1]--> Node B (Transformer) --[Queue 2]--> Node C (Con
    - 考慮增加一個 specialization constant 控制線程角色比例，方便實驗。
 
 2. **Phase 4 啟動 — LDS（Shared Memory）佇列**：
-   - 將 Task Queue 移至 `shared` memory（LDS），量測 on-chip memory 與 SSBO 的吞吐量差異。
-   - 這是本 POC 的核心研究問題之一：persistent thread 能否透過 LDS 達到比 execute indirect 更低的調度延遲。
+   - 將 Task Queue 移至 `shared` memory（LDS），量測 producer-consumer handoff 是否受 global memory traffic 限制。
+   - 這是用來定位瓶頸與驗證優化方向的實驗，不再表述為「persistent thread 是否比 execute indirect 更低延遲」。
 
 3. **性能量測基礎建設**：
    - 加入 `vkCmdWriteTimestamp` / pipeline statistics query，建立 baseline 數據。

@@ -3,6 +3,14 @@
 ## 專案名稱
 Vulkan Persistent Thread Producer-Consumer Network POC
 
+## 研究定位（更正版）
+
+本研究定位更正為：基於 software 實作盡可能快的 producer-consumer 架構。重點不是單純模仿 D3D Work Graphs 的 API，而是透過實作、profiling 與 metrics 找出瓶頸，並提出可落地的 optimization 方向。
+
+## 研究意義
+
+這能讓 MTK 預先知道：若未來要在 mobile GPU 上實現 producer-consumer，主要瓶頸可能會落在哪裡，例如 atomic contention、global memory traffic、queue pressure、producer/consumer imbalance、memory visibility 與 spin-wait，進而提供 runtime、driver、hardware 的優化方向。
+
 ## 本週工作摘要
 
 本週完成了兩項重要工作：（1）將科赫雪花（Koch Snowflake）作為具體的計算任務接入 persistent thread 管線，驗證 branching（1→4 子任務）的 feedback loop 機制；（2）將線程角色分配從 thread-level 重構為 workgroup-level，消除 wavefront 內的 branch divergence。過程中發現並解決了三個跨 workgroup 記憶體可見性問題。
@@ -116,7 +124,7 @@ Node A --seed 3 edges--> Queue 1 --+--> Node B --subdivide--> Queue 1 (feedback,
 
 1. **Node B 的 feedback loop 在高 MAX_DEPTH 時可能 deadlock**：若 Q1 滿了而所有 Node B 線程都在 pushQ1 自旋等待，沒有線程能消費 Q1 騰出空間。目前 QUEUE_SIZE=4096 對 MAX_DEPTH=4 有足夠餘量，但 MAX_DEPTH=6+ 可能有問題。
 2. **CAS 競爭開銷未量化**：尚無 timestamp query 或 per-thread failure counter。
-3. **全部在 global memory**：佇列仍位於 SSBO，延遲遠高於 LDS。
+3. **全部在 global memory**：佇列仍位於 SSBO，producer-consumer handoff 可能受 global memory traffic 與 queue contention 限制。
 4. **線程角色靜態分配**：WG 0-5 vs WG 6-7 的比例固定，無 work stealing。
 5. **渲染管線尚未實現**：output vertex buffer 目前僅由 CPU 讀回驗證。
 
@@ -131,4 +139,4 @@ Node A --seed 3 edges--> Queue 1 --+--> Node B --subdivide--> Queue 1 (feedback,
    - 量測 CAS 失敗率。
 
 3. **Phase 4 探索 — LDS 佇列**：
-   - 評估將 intra-workgroup 通訊移至 shared memory 的可行性。
+   - 評估將 intra-workgroup 通訊移至 shared memory 的可行性，確認這是否能降低 producer-consumer 的 global queue traffic。

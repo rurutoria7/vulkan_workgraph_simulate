@@ -83,6 +83,16 @@ add_textbox(slide, '2026 / 04 / 20', Inches(1), Inches(3.8), Inches(11), Inches(
 add_textbox(slide, 'LUO-WEN-CHIEN', Inches(1), Inches(4.4), Inches(11), Inches(0.5),
             size=18, color=RGBColor(0x6c, 0x70, 0x86), align=PP_ALIGN.CENTER)
 
+# ── Slide 2: Research positioning ───────────────────────────────
+add_bullet_slide(prs, '研究定位（更正版）', [
+    {'text': '基於 software 實作盡可能快的 producer-consumer 架構', 'color': YELLOW, 'size': 25},
+    {'text': '重點不是單純模仿 D3D Work Graphs API，而是透過 profiling / metrics 找出瓶頸', 'indent': 1, 'size': 20},
+    {'text': '每次 optimization 只驗證一個假設，保留 bottleneck 歸因', 'indent': 1, 'size': 20},
+    {'text': '意義：讓 MTK 預先知道 mobile producer-consumer 會卡在哪裡', 'color': SUBTEXT, 'size': 25},
+    {'text': '可能瓶頸：atomic contention、global memory traffic、queue pressure、role imbalance、memory visibility、spin-wait', 'indent': 1, 'size': 20},
+    {'text': '產出：提供 runtime、driver、hardware 可採用的優化方向', 'indent': 1, 'size': 20},
+])
+
 # ── Slide 2: 本週做了什麼 (Overview) ────────────────────────────
 add_bullet_slide(prs, '本週完成事項 Overview', [
     {'text': '① 科赫雪花（Koch Snowflake）接入 Persistent Thread 管線', 'color': YELLOW, 'size': 24},
@@ -136,7 +146,7 @@ add_bullet_slide(prs, '結果與下週計畫', [
     {'text': '下週計畫', 'color': SUBTEXT, 'size': 25},
     {'text': '渲染管線：output vertex buffer → VK_PRIMITIVE_TOPOLOGY_LINE_LIST 顯示', 'indent': 1},
     {'text': '性能量測：vkCmdWriteTimestamp 量化 GPU 純計算時間 + CAS 失敗率', 'indent': 1},
-    {'text': 'Phase 4 探索：intra-workgroup 通訊移至 LDS（shared memory）', 'indent': 1},
+    {'text': 'Phase 4 探索：用 LDS/local queue 驗證 global queue traffic 是否為主要瓶頸', 'indent': 1},
 ])
 
 out = Path(__file__).resolve().parents[2] / 'reports' / '2026-04' / 'weekly' / 'weekly_report_260420.pptx'
