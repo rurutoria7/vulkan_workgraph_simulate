@@ -5,6 +5,8 @@
 
 #include "vulkanexamplebase.h"
 
+// Koch edge count is 3 * 4^depth. The shader receives the same values via
+// specialization constants; keep these defines in sync with headless.comp.
 #define MAX_DEPTH 8
 #define EXPECTED_EDGES (3u * (1u << (2u * MAX_DEPTH)))
 #define EXPECTED_VERTICES (EXPECTED_EDGES * 2u)
@@ -28,6 +30,8 @@ struct ControlBlock {
 };
 
 struct Task {
+	// Shared ABI with GLSL: [0..3]=edge endpoints, [4]=depth, [5]=ready flag.
+	// The shader must access payload[5] atomically for cross-CU visibility.
 	uint32_t payload[6];
 };
 
@@ -121,7 +125,8 @@ public:
 		createBuf(&compute.q1Buf, &compute.q1Mem, sizeof(Task) * QUEUE_SIZE, ssboTransfer);
 		createBuf(&compute.q2Buf, &compute.q2Mem, sizeof(Task) * QUEUE_SIZE, ssboTransfer);
 
-		// Vertex buffer: storage + vertex + transfer dst (for potential clears)
+		// Output is deterministic, so graphics consumes the full vertex buffer
+		// without CPU readback or indirect draw setup.
 		{
 			VkDeviceSize size = EXPECTED_VERTICES * sizeof(float) * 2;
 			VkBufferCreateInfo ci = vks::initializers::bufferCreateInfo(
@@ -178,6 +183,7 @@ public:
 		shaderStage.module = compute.shaderModule;
 		shaderStage.pName = "main";
 
+		// Constant IDs match headless.comp: queue size, depth, Node C start, edge count.
 		struct { uint32_t queueSize; uint32_t maxDepth; uint32_t nodeCStart; uint32_t maxDepthEdges; } specData = { QUEUE_SIZE, MAX_DEPTH, NODE_C_START, EXPECTED_EDGES };
 		VkSpecializationMapEntry specEntries[4] = {
 			{ 0, offsetof(decltype(specData), queueSize),     sizeof(uint32_t) },
@@ -319,6 +325,8 @@ public:
 		vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, graphics.pipeline);
 		VkDeviceSize offsets[1] = { 0 };
 		vkCmdBindVertexBuffers(cmd, 0, 1, &vertexBuffer.buffer, offsets);
+		// Koch output count is deterministic for MAX_DEPTH, so no hot-path
+		// readback is needed before drawing.
 		vkCmdDraw(cmd, EXPECTED_VERTICES, 1, 0, 0);
 
 		drawUI(cmd);
