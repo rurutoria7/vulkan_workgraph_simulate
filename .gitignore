@@ -243,3 +243,11 @@ libs/vulkan/*.so
 .vscode/*
 
 __pycache__**
+
+# Local report / presentation scratch outputs
+.codex_pptx_deps/
+.codex_tmp_pptx/
+.codex_tmp_pptx.zip
+tmp/
+visual_verification/chrome_profile*/
+imgui.ini

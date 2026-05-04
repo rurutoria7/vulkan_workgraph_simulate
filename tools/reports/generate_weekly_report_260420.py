@@ -3,6 +3,7 @@ from pptx.util import Inches, Pt, Emu
 from pptx.dml.color import RGBColor
 from pptx.enum.text import PP_ALIGN
 from pptx.util import Inches, Pt
+from pathlib import Path
 
 BG = RGBColor(0x1e, 0x1e, 0x2e)
 ACCENT = RGBColor(0x89, 0xb4, 0xfa)
@@ -138,6 +139,6 @@ add_bullet_slide(prs, '結果與下週計畫', [
     {'text': 'Phase 4 探索：intra-workgroup 通訊移至 LDS（shared memory）', 'indent': 1},
 ])
 
-out = r'C:\CGV\Projects\D3DWorkgraph\workgraph_vulkan_poc\weekly_report_260420.pptx'
-prs.save(out)
+out = Path(__file__).resolve().parents[2] / 'reports' / '2026-04' / 'weekly' / 'weekly_report_260420.pptx'
+prs.save(str(out))
 print(f'Saved: {out}')
