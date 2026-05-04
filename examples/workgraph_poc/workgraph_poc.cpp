@@ -13,12 +13,6 @@
 #define QUEUE_SIZE EXPECTED_EDGES
 #define NUM_WORKGROUPS 96
 #define NODE_C_START 72
-#define NODE_C_START_NUMERATOR 3u
-#define NODE_C_START_DENOMINATOR 4u
-#define SHADER_MODE_KOCH 0u
-#define SHADER_MODE_CAS_SHARDS 1u
-#define CAS_COUNTER_STRIDE_DEFAULT 8u
-#define CAS_SUCCESSES_PER_INVOCATION_DEFAULT 4096u
 
 enum TimestampQuery : uint32_t {
 	TimestampFrameStart = 0,
@@ -75,15 +69,6 @@ struct DebugCounters {
 	uint32_t vertexWriteCalls;
 	uint32_t stopFlagWrites;
 	uint32_t pushStopExits;
-
-	uint32_t casAttempts;
-	uint32_t casSuccess;
-	uint32_t casFailures;
-	uint32_t casShards;
-	uint32_t casSuccessesPerInvocation;
-	uint32_t casCounterStride;
-	uint32_t casTotalInvocations;
-	uint32_t casReserved;
 };
 
 struct ControlBlock {
@@ -102,8 +87,8 @@ struct Task {
 	uint32_t payload[6];
 };
 
-static_assert(sizeof(DebugCounters) == 44u * sizeof(uint32_t));
-static_assert(sizeof(ControlBlock) == 54u * sizeof(uint32_t));
+static_assert(sizeof(DebugCounters) == 36u * sizeof(uint32_t));
+static_assert(sizeof(ControlBlock) == 46u * sizeof(uint32_t));
 
 class VulkanExample : public VulkanExampleBase
 {
@@ -132,16 +117,6 @@ public:
 		VkPipelineLayout pipelineLayout;
 		VkPipeline pipeline;
 	} graphics{};
-
-	struct {
-		uint32_t workgroups{ NUM_WORKGROUPS };
-		uint32_t nodeCStart{ NODE_C_START };
-		bool explicitNodeCStart{ false };
-		bool casShardsEnabled{ false };
-		uint32_t casShards{ 1u };
-		uint32_t casSuccessesPerInvocation{ CAS_SUCCESSES_PER_INVOCATION_DEFAULT };
-		uint32_t casCounterStride{ CAS_COUNTER_STRIDE_DEFAULT };
-	} experiment{};
 
 	struct {
 		VkQueryPool queryPool{ VK_NULL_HANDLE };
@@ -176,7 +151,6 @@ public:
 	{
 		title = "Koch Snowflake - Persistent Thread Generator (Per-Frame Compute)";
 		settings.vsync = false;
-		configureExperimentFromArgs();
 		configureMetricsFromArgs();
 	}
 
@@ -248,55 +222,15 @@ public:
 		return fallback;
 	}
 
-	void configureExperimentFromArgs()
-	{
-		experiment.workgroups = getArgValue("--wg-workgroups", NUM_WORKGROUPS);
-		experiment.casShardsEnabled = hasArg("--wg-cas-shards");
-		experiment.casCounterStride = getArgValue("--wg-cas-counter-stride", CAS_COUNTER_STRIDE_DEFAULT);
-		experiment.casSuccessesPerInvocation = getArgValue("--wg-cas-successes-per-invocation", CAS_SUCCESSES_PER_INVOCATION_DEFAULT);
-		experiment.explicitNodeCStart = hasArg("--wg-node-c-start");
-		if (experiment.explicitNodeCStart) {
-			experiment.nodeCStart = getArgValue("--wg-node-c-start", NODE_C_START);
-		} else if (experiment.workgroups != NUM_WORKGROUPS) {
-			experiment.nodeCStart = (experiment.workgroups * NODE_C_START_NUMERATOR + NODE_C_START_DENOMINATOR - 1u) / NODE_C_START_DENOMINATOR;
-		} else {
-			experiment.nodeCStart = NODE_C_START;
-		}
-
-		if (experiment.workgroups < 2u) {
-			experiment.workgroups = 2u;
-		}
-		if (experiment.nodeCStart == 0u) {
-			experiment.nodeCStart = 1u;
-		}
-		if (experiment.nodeCStart >= experiment.workgroups) {
-			experiment.nodeCStart = experiment.workgroups - 1u;
-		}
-
-		if (experiment.casCounterStride == 0u) {
-			experiment.casCounterStride = 1u;
-		}
-		if (experiment.casShardsEnabled) {
-			experiment.casShards = getArgValue("--wg-cas-shards", 1u);
-			const uint32_t maxByBuffer = std::max(1u, QUEUE_SIZE / experiment.casCounterStride);
-			const uint32_t maxByDispatch = std::max(1u, experiment.workgroups * 32u);
-			const uint32_t maxShards = std::min(maxByBuffer, maxByDispatch);
-			experiment.casShards = std::max(1u, std::min(experiment.casShards, maxShards));
-		}
-	}
-
 	void configureMetricsFromArgs()
 	{
-		metrics.stdoutEnabled = hasArg("--wg-metrics-stdout") || experiment.casShardsEnabled;
-		metrics.enabled = hasArg("--wg-metrics") || metrics.stdoutEnabled || experiment.casShardsEnabled;
+		metrics.stdoutEnabled = hasArg("--wg-metrics-stdout");
+		metrics.enabled = hasArg("--wg-metrics") || metrics.stdoutEnabled;
 		if (hasArg("--wg-no-metrics")) {
 			metrics.enabled = false;
 			metrics.stdoutEnabled = false;
 		}
 		metrics.stdoutInterval = getArgValue("--wg-metrics-interval", metrics.stdoutInterval);
-		if (experiment.casShardsEnabled && !hasArg("--wg-metrics-interval")) {
-			metrics.stdoutInterval = 1u;
-		}
 
 #if defined(_WIN32)
 		if (metrics.stdoutEnabled) {
@@ -413,34 +347,22 @@ public:
 			uint32_t nodeCStart;
 			uint32_t maxDepthEdges;
 			uint32_t enableShaderMetrics;
-			uint32_t shaderMode;
-			uint32_t casShards;
-			uint32_t casSuccessesPerInvocation;
-			uint32_t casCounterStride;
 		} specData = {
 			QUEUE_SIZE,
 			MAX_DEPTH,
-			experiment.nodeCStart,
+			NODE_C_START,
 			EXPECTED_EDGES,
-			metrics.enabled ? 1u : 0u,
-			experiment.casShardsEnabled ? SHADER_MODE_CAS_SHARDS : SHADER_MODE_KOCH,
-			experiment.casShards,
-			experiment.casSuccessesPerInvocation,
-			experiment.casCounterStride
+			metrics.enabled ? 1u : 0u
 		};
-		VkSpecializationMapEntry specEntries[9] = {
+		VkSpecializationMapEntry specEntries[5] = {
 			{ 0, offsetof(decltype(specData), queueSize),     sizeof(uint32_t) },
 			{ 1, offsetof(decltype(specData), maxDepth),      sizeof(uint32_t) },
 			{ 2, offsetof(decltype(specData), nodeCStart),    sizeof(uint32_t) },
 			{ 3, offsetof(decltype(specData), maxDepthEdges), sizeof(uint32_t) },
-			{ 4, offsetof(decltype(specData), enableShaderMetrics), sizeof(uint32_t) },
-			{ 5, offsetof(decltype(specData), shaderMode),    sizeof(uint32_t) },
-			{ 6, offsetof(decltype(specData), casShards),     sizeof(uint32_t) },
-			{ 7, offsetof(decltype(specData), casSuccessesPerInvocation), sizeof(uint32_t) },
-			{ 8, offsetof(decltype(specData), casCounterStride), sizeof(uint32_t) },
+			{ 4, offsetof(decltype(specData), enableShaderMetrics), sizeof(uint32_t) }
 		};
 		VkSpecializationInfo specInfo = {};
-		specInfo.mapEntryCount = 9;
+		specInfo.mapEntryCount = 5;
 		specInfo.pMapEntries = specEntries;
 		specInfo.dataSize = sizeof(specData);
 		specInfo.pData = &specData;
@@ -584,13 +506,9 @@ public:
 		if (!metrics.stdoutHeaderPrinted) {
 			std::cout
 				<< "WG_METRICS_HEADER frame,gpu_frame_ms,reset_ms,reset_barrier_ms,compute_ms,metrics_copy_ms,render_ms,"
-				<< "mode,wg_workgroups,node_c_start,node_b_workgroups,node_c_workgroups,"
 				<< "edges,vertices,edges_per_ms,vertices_per_ms,"
-				<< "cas_shards,cas_counter_stride,cas_successes_per_invocation,cas_total_invocations,"
-				<< "cas_attempts,cas_successes,cas_failures,cas_attempts_per_success,cas_successes_per_ms,cas_attempts_per_ms,"
 				<< "q1_enq_ok,q1_enq_cas_fail,q1_enq_full,q1_deq_ok,q1_deq_cas_fail,q1_deq_empty,q1_ready_cas_fail,q1_ready_max_spin,q1_high_water,"
 				<< "q2_enq_ok,q2_enq_cas_fail,q2_enq_full,q2_deq_ok,q2_deq_cas_fail,q2_deq_empty,q2_ready_cas_fail,q2_ready_max_spin,q2_high_water,"
-				<< "q1_deq_cas_fail_per_ok,q2_deq_cas_fail_per_ok,q2_deq_empty_per_ok,"
 				<< "node_a_seed,node_b_tasks,node_b_subdivide,node_b_final,node_c_output,stop_writes\n";
 			metrics.stdoutHeaderPrinted = true;
 		}
@@ -604,25 +522,10 @@ public:
 			<< metrics.latest.computeMs << ","
 			<< metrics.latest.metricsCopyMs << ","
 			<< metrics.latest.renderMs << ","
-			<< (experiment.casShardsEnabled ? "cas_shards" : "koch") << ","
-			<< experiment.workgroups << ","
-			<< experiment.nodeCStart << ","
-			<< experiment.nodeCStart << ","
-			<< (experiment.workgroups - experiment.nodeCStart) << ","
 			<< control.totalProcessed << ","
 			<< control.vertexCount << ","
 			<< metrics.latest.edgesPerMs << ","
 			<< metrics.latest.verticesPerMs << ","
-			<< c.casShards << ","
-			<< c.casCounterStride << ","
-			<< c.casSuccessesPerInvocation << ","
-			<< c.casTotalInvocations << ","
-			<< c.casAttempts << ","
-			<< c.casSuccess << ","
-			<< c.casFailures << ","
-			<< ratio(c.casAttempts, c.casSuccess) << ","
-			<< (metrics.latest.computeMs > 0.0f ? static_cast<float>(c.casSuccess) / metrics.latest.computeMs : 0.0f) << ","
-			<< (metrics.latest.computeMs > 0.0f ? static_cast<float>(c.casAttempts) / metrics.latest.computeMs : 0.0f) << ","
 			<< c.q1EnqueueSuccess << ","
 			<< c.q1EnqueueCasFail << ","
 			<< c.q1EnqueueFull << ","
@@ -641,9 +544,6 @@ public:
 			<< c.q2ReadyCasFail << ","
 			<< c.q2ReadyMaxSpin << ","
 			<< c.q2HighWater << ","
-			<< ratio(c.q1DequeueCasFail, c.q1DequeueSuccess) << ","
-			<< ratio(c.q2DequeueCasFail, c.q2DequeueSuccess) << ","
-			<< ratio(c.q2DequeueEmpty, c.q2DequeueSuccess) << ","
 			<< c.nodeASeedEdges << ","
 			<< c.nodeBTasks << ","
 			<< c.nodeBSubdivideTasks << ","
@@ -682,7 +582,7 @@ public:
 		// --- Phase 2: Compute dispatch (persistent threads) ---
 		vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, compute.pipeline);
 		vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, compute.pipelineLayout, 0, 1, &compute.descriptorSet, 0, 0);
-		vkCmdDispatch(cmd, experiment.workgroups, 1, 1);
+		vkCmdDispatch(cmd, NUM_WORKGROUPS, 1, 1);
 		writeTimestamp(cmd, TimestampAfterCompute, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT);
 
 		// --- Phase 3: Barrier compute writes for vertex input and metrics readback ---
@@ -757,9 +657,7 @@ public:
 		vkCmdBindVertexBuffers(cmd, 0, 1, &vertexBuffer.buffer, offsets);
 		// Koch output count is deterministic for MAX_DEPTH, so no hot-path
 		// readback is needed before drawing.
-		if (!experiment.casShardsEnabled) {
-			vkCmdDraw(cmd, EXPECTED_VERTICES, 1, 0, 0);
-		}
+		vkCmdDraw(cmd, EXPECTED_VERTICES, 1, 0, 0);
 
 		drawUI(cmd);
 
@@ -789,22 +687,6 @@ public:
 
 		const ControlBlock& control = metrics.latest.control;
 		const DebugCounters& c = control.metrics;
-
-		if (experiment.casShardsEnabled) {
-			if (overlay->header("CAS shard benchmark")) {
-				if (metrics.latest.timestampsValid) {
-					overlay->text("Compute: %.3f ms", metrics.latest.computeMs);
-				} else {
-					overlay->text("Timestamps unavailable");
-				}
-				overlay->text("Shards: %u, stride: %u", c.casShards, c.casCounterStride);
-				overlay->text("Successes/invocation: %u", c.casSuccessesPerInvocation);
-				overlay->text("Invocations: %u", c.casTotalInvocations);
-				overlay->text("CAS success/attempt/fail: %u / %u / %u", c.casSuccess, c.casAttempts, c.casFailures);
-				overlay->text("CAS success/ms: %.1f", metrics.latest.computeMs > 0.0f ? static_cast<float>(c.casSuccess) / metrics.latest.computeMs : 0.0f);
-			}
-			return;
-		}
 
 		if (overlay->header("GPU metrics")) {
 			if (metrics.latest.timestampsValid) {
@@ -843,7 +725,7 @@ public:
 				c.q2EnqueueSuccess + c.q2DequeueSuccess + c.q2ReadyCasSuccess));
 			overlay->text("Q1 ready CAS attempts/fail/max spin: %u / %u / %u", c.q1ReadyCasAttempts, c.q1ReadyCasFail, c.q1ReadyMaxSpin);
 			overlay->text("Q2 ready CAS attempts/fail/max spin: %u / %u / %u", c.q2ReadyCasAttempts, c.q2ReadyCasFail, c.q2ReadyMaxSpin);
-			overlay->text("Workgroups B/C: %u / %u", experiment.nodeCStart, experiment.workgroups - experiment.nodeCStart);
+			overlay->text("Workgroups B/C: %u / %u", NODE_C_START, NUM_WORKGROUPS - NODE_C_START);
 			overlay->text("Shader metrics: %s", metrics.enabled ? "on" : "off");
 		}
 	}
