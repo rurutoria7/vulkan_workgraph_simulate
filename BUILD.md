@@ -20,6 +20,60 @@ Use the provided CMakeLists.txt with [CMake](https://cmake.org) to generate a bu
 cmake -G "Visual Studio 16 2019" -A x64
 ```
 
+## Workgraph POC
+
+The active workgraph experiment is `workgraph_poc`. Build and run it from the
+repository root so shader paths resolve correctly:
+
+```powershell
+cmake -G "Visual Studio 17 2022" -A x64 -B build
+cmake --build build --target workgraph_poc --config Release --parallel 12
+build\bin\Release\workgraph_poc.exe
+```
+
+Metrics（指標）預設關閉。做 baseline performance 測試時不要加
+`--wg-metrics*` flag；這樣不會建立 timestamp query / readback buffer，
+shader 端 metrics specialization constant 也是 `0`。
+
+可用的 workgraph POC metrics flags：
+
+```text
+--wg-metrics             開啟 UI overlay metrics
+--wg-metrics-stdout      開啟 metrics，並輸出到 stdout，方便 CLI 讀取
+--wg-metrics-interval N  每 N 個 completed frame 輸出一次 stdout metrics
+--wg-no-metrics          強制關閉 metrics；如果和其他 metrics flag 同時出現，這個優先
+```
+
+開啟 stdout metrics 的 benchmark 範例：
+
+```powershell
+build\bin\Release\workgraph_poc.exe --benchmark --benchmarkwarmup 0 --benchmarkframes 60 --wg-metrics-stdout --wg-metrics-interval 1
+```
+
+stdout 會輸出 `WG_METRICS_HEADER` 和 `WG_METRICS` 行：
+
+```text
+WG_METRICS_HEADER frame,gpu_frame_ms,reset_ms,reset_barrier_ms,compute_ms,...
+WG_METRICS 1,48.1234,0.0080,0.0074,48.0500,...
+```
+
+判斷 atomic contention（atomic 塞車）時，優先看：
+
+- `q1_enq_cas_fail` / `q1_deq_cas_fail`
+- `q2_enq_cas_fail` / `q2_deq_cas_fail`
+- `q1_ready_cas_fail` / `q2_ready_cas_fail`
+- `q1_high_water` / `q2_high_water`
+- workgroup 數增加後，`compute_ms` 和 CAS fail 是否超線性上升
+
+修改 `shaders/glsl/workgraph_poc/headless.comp` 後，需要重建 SPIR-V 並同步
+legacy mirror：
+
+```powershell
+glslangValidator -V shaders\glsl\workgraph_poc\headless.comp -o shaders\glsl\workgraph_poc\headless.comp.spv
+Copy-Item -LiteralPath shaders\glsl\workgraph_poc\headless.comp.spv -Destination shaders\workgraph_poc\headless.comp.spv -Force
+cmake --build build --target workgraph_poc --config Release --parallel 12
+```
+
 ### <img src="./images/linuxlogo.png" alt="" height="32px"> Linux
 
 Use the provided CMakeLists.txt with [CMake](https://cmake.org) to generate a build configuration for your favorite IDE or compiler.
