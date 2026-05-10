@@ -73,3 +73,17 @@ shader binary. Keep it in sync while it remains in the repository.
   GPU reset -> compute dispatch -> barrier -> render pass.
 - Keep report assets out of the repository root; use `reports/` and
   `tools/reports/` instead.
+
+## Profiling Analysis Rules
+
+- Do not force-fit explanations for profiling results. If the evidence is
+  incomplete, say what is unknown and propose a targeted check instead of
+  filling the gap with a plausible story.
+- Keep observations, hypotheses, and conclusions separate. Mark speculation
+  explicitly, and only promote it to a conclusion after checking code, trace
+  settings, and controlled measurements.
+- Before attributing unchanged duration to a new bottleneck, first rule out
+  measurement artifacts such as enabled metrics, shader instrumentation,
+  synchronization, frame selection, or profiler sampling scope.
+- If a later measurement fix contradicts an earlier report explanation, update
+  the report rather than preserving the old interpretation.

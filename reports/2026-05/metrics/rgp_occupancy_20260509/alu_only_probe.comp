@@ -1,0 +1,81 @@
+#version 450
+
+layout(local_size_x = 32) in;
+
+struct QueueControl { uint head; uint tail; uint count; };
+struct DebugCounters {
+    uint q1EnqueueAttempts;
+    uint q1EnqueueSuccess;
+    uint q1EnqueueCasFail;
+    uint q1EnqueueFull;
+    uint q1DequeueAttempts;
+    uint q1DequeueSuccess;
+    uint q1DequeueCasFail;
+    uint q1DequeueEmpty;
+    uint q1ReadyExchange;
+    uint q1ReadyCasAttempts;
+    uint q1ReadyCasSuccess;
+    uint q1ReadyCasFail;
+    uint q1ReadyMaxSpin;
+    uint q1HighWater;
+    uint q1DequeueBatches;
+    uint q1DequeueBatchSlots;
+    uint q1DequeueBatchCasAttempts;
+    uint q1DequeueBatchCasFail;
+    uint q1DequeueBatchEmpty;
+    uint q1DequeueBatchPartial;
+
+    uint q2EnqueueAttempts;
+    uint q2EnqueueSuccess;
+    uint q2EnqueueCasFail;
+    uint q2EnqueueFull;
+    uint q2DequeueAttempts;
+    uint q2DequeueSuccess;
+    uint q2DequeueCasFail;
+    uint q2DequeueEmpty;
+    uint q2ReadyExchange;
+    uint q2ReadyCasAttempts;
+    uint q2ReadyCasSuccess;
+    uint q2ReadyCasFail;
+    uint q2ReadyMaxSpin;
+    uint q2HighWater;
+
+    uint nodeASeedEdges;
+    uint nodeBTasks;
+    uint nodeBSubdivideTasks;
+    uint nodeBFinalTasks;
+    uint nodeCOutputEdges;
+    uint vertexWriteCalls;
+    uint stopFlagWrites;
+    uint pushStopExits;
+};
+
+layout(std430, binding = 0) coherent buffer ControlBlock {
+    QueueControl q1;
+    QueueControl q2;
+    uint stopFlag;
+    uint totalProcessed;
+    uint vertexCount;
+    uint seedDone;
+    DebugCounters metrics;
+} control;
+
+layout(std430, binding = 3) coherent buffer OutputVertices { vec2 vertices[]; } output_vb;
+
+void main() {
+    uint idx = gl_WorkGroupID.x * gl_WorkGroupSize.x + gl_LocalInvocationID.x;
+    uint acc = idx * 747796405u + 2891336453u;
+
+    for (uint i = 0u; i < 40000000u; ++i) {
+        acc = acc * 1664525u + 1013904223u + i;
+    }
+
+    output_vb.vertices[idx] = vec2(float(acc & 65535u) * 0.00000001,
+                                   float(acc >> 16) * 0.00000001);
+
+    if (idx == 0u) {
+        control.totalProcessed = 196608u;
+        control.vertexCount = 393216u;
+        control.stopFlag = 1u;
+    }
+}

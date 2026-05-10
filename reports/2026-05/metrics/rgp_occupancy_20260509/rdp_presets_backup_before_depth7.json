@@ -1,0 +1,95 @@
+{
+    "current": {
+        "builtin": false,
+        "last_loaded": "",
+        "modules": {
+            "CrashAnalysis": {
+                "data": "{\"enable_advanced_crash\":false,\"expand_markers\":false,\"generate_json_summary\":false,\"generate_text_summary\":true,\"output_path\":\"C:\\\\Users\\\\Kevin\\\\Documents\\\\rgd_dumps\\\\$(APP_NAME)\",\"pdb_search_paths\":[],\"serialize_alu_ops\":false,\"serialize_mem_ops\":false,\"show_marker_source\":false}",
+                "enabled": false
+            },
+            "DeviceClocks": {
+                "data": "",
+                "enabled": false
+            },
+            "DriverSettings": {
+                "data": "{\"driver_path_overrides\":[],\"dx11\":[],\"dx12\":[],\"favorites\":[],\"vk_android\":[],\"vk_lin\":[],\"vk_win\":[]}",
+                "enabled": false
+            },
+            "MemoryTrace": {
+                "data": "{\"output_path\":\"C:\\\\Users\\\\Kevin\\\\Documents\\\\rmv_traces\\\\$(APP_NAME)\"}",
+                "enabled": false
+            },
+            "Profiling": {
+                "data": "{\"capture_delay\":100,\"compute_auto_capture_time_ms\":1000,\"default_capture_modes\":[{\"api\":1,\"app_name\":\"MeshNodeSample_DX12D.exe\",\"default_mode\":1}],\"delay_capture\":false,\"disable_capture_timeout\":false,\"dispatch_count\":12,\"dispatch_start_index\":0,\"enable_counters\":true,\"enable_inst_tracing\":true,\"enable_shader_instrumentation\":true,\"frame_capture_index\":5,\"opencl_auto_trigger\":0,\"output_path\":\"C:\\\\Users\\\\Kevin\\\\Documents\\\\rgp_profiles\\\\D3D12HelloTexture\",\"shortcut_native_key\":67,\"shortcut_sequence\":201326659,\"spm_counter_frequency\":4096,\"spm_counter_path\":\"\",\"sqtt_buffer_custom_size\":1,\"sqtt_buffer_size_profile\":2}",
+                "enabled": true
+            },
+            "Raytracing": {
+                "data": "{\"capture_delay\":100,\"delay_capture\":false,\"enable_ray_history\":true,\"output_path\":\"C:\\\\Users\\\\Kevin\\\\Documents\\\\rra_scenes\\\\$(APP_NAME)\",\"ray_history_buffer_size_custom\":\"1073741824\",\"ray_history_buffer_size_index\":2,\"shortcut_native_key\":119,\"shortcut_sequence\":83886135}",
+                "enabled": false
+            }
+        },
+        "name": ""
+    },
+    "presets": [
+        {
+            "builtin": true,
+            "last_loaded": "2024-10-26 17:59:31",
+            "modules": {
+                "DeviceClocks": {
+                    "data": "",
+                    "enabled": true
+                },
+                "Profiling": {
+                    "data": "",
+                    "enabled": true
+                }
+            },
+            "name": "Profiling"
+        },
+        {
+            "builtin": true,
+            "last_loaded": "2024-10-26 17:59:31",
+            "modules": {
+                "DeviceClocks": {
+                    "data": "",
+                    "enabled": true
+                },
+                "MemoryTrace": {
+                    "data": "",
+                    "enabled": true
+                }
+            },
+            "name": "Memory Trace"
+        },
+        {
+            "builtin": true,
+            "last_loaded": "2024-10-26 17:59:31",
+            "modules": {
+                "DeviceClocks": {
+                    "data": "",
+                    "enabled": true
+                },
+                "Raytracing": {
+                    "data": "",
+                    "enabled": true
+                }
+            },
+            "name": "Raytracing"
+        },
+        {
+            "builtin": true,
+            "last_loaded": "2024-10-26 17:59:31",
+            "modules": {
+                "CrashAnalysis": {
+                    "data": "",
+                    "enabled": true
+                },
+                "DeviceClocks": {
+                    "data": "",
+                    "enabled": true
+                }
+            },
+            "name": "Crash Analysis"
+        }
+    ]
+}

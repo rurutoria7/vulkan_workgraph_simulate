@@ -9,25 +9,25 @@
 
 ## Baseline Setup
 
-| Item | Value |
-|---|---|
-| Build target | `workgraph_poc` |
-| Build config | `Release` |
-| GPU | AMD Radeon RX 7900 XTX |
-| Workload | Koch snowflake, `MAX_DEPTH=8` |
-| Expected edges | `196608` |
-| Expected vertices | `393216` |
+| Item              | Value                         |
+| -------------------| -------------------------------|
+| Build target      | `workgraph_poc`               |
+| Build config      | `Release`                     |
+| GPU               | AMD Radeon RX 7900 XTX        |
+| Workload          | Koch snowflake, `MAX_DEPTH=8` |
+| Expected edges    | `196608`                      |
+| Expected vertices | `393216`                      |
 
 ## Baseline Result
 
-| Metric | Avg | Min | Median | Max | Note |
-|---|---:|---:|---:|---:|---|
-| GPU frame ms | `46.42` | `44.99` | `46.24` | `49.60` | reset + compute + metrics copy + render |
-| Compute ms | `46.29` | `44.92` | `46.17` | `49.53` | 主要成本 |
-| Metrics copy ms | `0.081` | `0.018` | `0.022` | `0.404` | 成本小，偶爾有 spike |
-| Render ms | `0.0277` | `0.0262` | `0.0277` | `0.0285` | 不是瓶頸 |
-| Edges / ms | `4250.52` | `3969.31` | `4258.26` | `4376.76` | throughput |
-| Vertices / ms | `8501.05` | `7938.63` | `8516.52` | `8753.52` | throughput |
+| Metric          | Avg       | Min       | Median    | Max       | Note　　　　　　　　　　　　　　　　　　|
+| -----------------| ----------:| ----------:| ----------:| ----------:| -----------------------------------------|
+| GPU frame ms    | `46.42`   | `44.99`   | `46.24`   | `49.60`   | reset + compute + metrics copy + render |
+| Compute ms      | `46.29`   | `44.92`   | `46.17`   | `49.53`   | 主要成本　　　　　　　　　　　　　　　　|
+| Metrics copy ms | `0.081`   | `0.018`   | `0.022`   | `0.404`   | 成本小，偶爾有 spike　　　　　　　　　　|
+| Render ms       | `0.0277`  | `0.0262`  | `0.0277`  | `0.0285`  | 不是瓶頸　　　　　　　　　　　　　　　　|
+| Edges / ms      | `4250.52` | `3969.31` | `4258.26` | `4376.76` | throughput　　　　　　　　　　　　　　　|
+| Vertices / ms   | `8501.05` | `7938.63` | `8516.52` | `8753.52` | throughput　　　　　　　　　　　　　　　|
 
 ## Correctness Counters
 
@@ -43,16 +43,16 @@
 
 ## Queue Bottlenecks
 
-| Metric | Avg | Observation |
-|---|---:|---|
-| `q1_enq_cas_fail` | `3.15e6` | Q1 producer tail contention 明顯 |
-| `q1_deq_cas_fail` | `4.00e7` | 最大 hotspot | <!-- highlight -->
-| `q2_enq_cas_fail` | `5.12e5` | enqueue contention 較低 |
-| `q2_deq_cas_fail` | `1.41e7` | dequeue contention 仍然很高 | <!-- highlight -->
-| `q1_high_water` | `9.70e4` | 約 queue capacity 的 49% |
-| `q2_high_water` | `1.69e2` | Q2 occupancy 很低 |
-| `q1_ready_max_spin` | `3.88` | 影響不大 |
-| `q2_ready_max_spin` | `17.88` | 有等待，但不是主要瓶頸 |
+| Metric              | Avg      | Observation　　　　　　　　　　　|                    |
+| ---------------------| ---------:| ----------------------------------| --------------------|
+| `q1_enq_cas_fail`   | `3.15e6` | Q1 producer tail contention 明顯 |                    |
+| `q1_deq_cas_fail`   | `4.00e7` | 最大 hotspot　　　　　　　　　　 | <!-- highlight --> |
+| `q2_enq_cas_fail`   | `5.12e5` | enqueue contention 較低　　　　　|                    |
+| `q2_deq_cas_fail`   | `1.41e7` | dequeue contention 仍然很高　　　| <!-- highlight --> |
+| `q1_high_water`     | `9.70e4` | 約 queue capacity 的 49%　　　　 |                    |
+| `q2_high_water`     | `1.69e2` | Q2 occupancy 很低　　　　　　　　|                    |
+| `q1_ready_max_spin` | `3.88`   | 影響不大　　　　　　　　　　　　 |                    |
+| `q2_ready_max_spin` | `17.88`  | 有等待，但不是主要瓶頸　　　　　 |                    |
 
 ## Initial Hypotheses
 

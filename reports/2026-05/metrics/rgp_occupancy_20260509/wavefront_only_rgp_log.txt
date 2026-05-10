@@ -1,0 +1,111 @@
+RgpProfileManager::OpenProfile C:\Users\Kevin\Documents\rgp_profiles\D3D12HelloTexture\workgraph_poc-20260509-210039.rgp
+------------ Memory Allocations Report for Data Set: ------------
+Events         :         15 @     712, (     10680 Bytes) [0.844627].
+Graphics State :          2 @   11472, (     22944 Bytes) [1.814524].
+Compute State  :          7 @     328, (      2296 Bytes) [0.181579].
+Register State :         15 @    9280, (    139200 Bytes) [11.008617].
+Wavefronts     :      25764 @      24, (    618336 Bytes) [48.901035].
+Barriers       :          6 @      88, (       528 Bytes) [0.041757].
+Layout Trans.  :          2 @      16, (        32 Bytes) [0.002531].
+Command Buffers:          1 @      56, (        56 Bytes) [0.004429].
+Context Ops    :      22644 @      12, (    271728 Bytes) [21.489580].
+Persistent Ops :      15084 @      12, (    181008 Bytes) [14.314999].
+Queue Timings: :         35 @      80, (      2800 Bytes) [0.221438].
+User Events    :          0 @      40, (         0 Bytes) [0.000000].
+User Event Str :          0 @       1, (         0 Bytes) [0.000000].
+Pipeline Info  :      14856                Bytes  [1.174885].
+Data Set Size* :          1 @  902424, (    902424 Bytes) [0.000000].
+Total Malloc   :    1264464 Bytes.
+Total Size     :    2166888 Bytes (         2 MB).
+-----------------------------------------------------------------
+
+Using SE0 as reference (Strategy #3) Shader engine: 0 rt timestamps skipped: 0 	 Delta applied: 0
+COMPUTE_THREAD_TRACE_ENABLE
+
+COMPUTE_THREAD_TRACE_ENABLE
+
+COMPUTE_THREAD_TRACE_ENABLE
+
+COMPUTE_THREAD_TRACE_ENABLE
+
+Shader engine 1: Reference rt timestamp: 1781638642
+Using SE0 as reference (Strategy #3) Shader engine: 1 rt timestamps skipped: 1 	 Delta applied: 210
+COMPUTE_THREAD_TRACE_ENABLE
+
+COMPUTE_THREAD_TRACE_ENABLE
+
+COMPUTE_THREAD_TRACE_ENABLE
+
+COMPUTE_THREAD_TRACE_ENABLE
+
+Shader engine 2: Reference rt timestamp: 1781638642
+Using SE0 as reference (Strategy #3) Shader engine: 2 rt timestamps skipped: 0 	 Delta applied: 0
+COMPUTE_THREAD_TRACE_ENABLE
+
+COMPUTE_THREAD_TRACE_ENABLE
+
+COMPUTE_THREAD_TRACE_ENABLE
+
+COMPUTE_THREAD_TRACE_ENABLE
+
+Shader engine 3: Reference rt timestamp: 1781638642
+Using SE0 as reference (Strategy #3) Shader engine: 3 rt timestamps skipped: 1 	 Delta applied: 210
+COMPUTE_THREAD_TRACE_ENABLE
+
+COMPUTE_THREAD_TRACE_ENABLE
+
+COMPUTE_THREAD_TRACE_ENABLE
+
+COMPUTE_THREAD_TRACE_ENABLE
+
+Shader engine 4: Reference rt timestamp: 1781638642
+Using SE0 as reference (Strategy #3) Shader engine: 4 rt timestamps skipped: 0 	 Delta applied: 0
+COMPUTE_THREAD_TRACE_ENABLE
+
+COMPUTE_THREAD_TRACE_ENABLE
+
+COMPUTE_THREAD_TRACE_ENABLE
+
+COMPUTE_THREAD_TRACE_ENABLE
+
+Shader engine 5: Reference rt timestamp: 1781638642
+Using SE0 as reference (Strategy #3) Shader engine: 5 rt timestamps skipped: 1 	 Delta applied: 211
+COMPUTE_THREAD_TRACE_ENABLE
+
+COMPUTE_THREAD_TRACE_ENABLE
+
+COMPUTE_THREAD_TRACE_ENABLE
+
+COMPUTE_THREAD_TRACE_ENABLE
+
+RgpWavefrontProcessorEnd: Frontend: 0 Process 0 deferred waves out of 0 actually deferred.
+RgpWavefrontProcessorEnd: Frontend: 1 Process 0 deferred waves out of 0 actually deferred.
+RgpWavefrontProcessorEnd: Frontend: 2 Process 0 deferred waves out of 0 actually deferred.
+RgpWavefrontProcessorEnd: Frontend: 3 Process 0 deferred waves out of 0 actually deferred.
+RgpWavefrontProcessorEnd: Frontend: 4 Process 0 deferred waves out of 0 actually deferred.
+RgpWavefrontProcessorEnd: Frontend: 5 Process 0 deferred waves out of 0 actually deferred.
+RgpWavefrontProcessorEnd: Frontend: 6 Process 0 deferred waves out of 0 actually deferred.
+RgpWavefrontProcessorEnd: Frontend: 7 Process 0 deferred waves out of 0 actually deferred.
+RgpWavefrontProcessorEnd: Frontend: 8 Process 0 deferred waves out of 0 actually deferred.
+RgpWavefrontProcessorEnd: Frontend: 9 Process 0 deferred waves out of 0 actually deferred.
+RgpWavefrontProcessorEnd: Frontend: 10 Process 0 deferred waves out of 0 actually deferred.
+RgpWavefrontProcessorEnd: Frontend: 11 Process 0 deferred waves out of 0 actually deferred.
+RgpEventProcessorEnd: ME 0 Pipe 0.
+RgpEventProcessorEnd: ME 0 Pipe 1.
+RgpEventProcessorEnd: ME 0 Pipe 2.
+RgpEventProcessorEnd: ME 0 Pipe 3.
+RgpEventProcessorEnd: ME 1 Pipe 0.
+RgpEventProcessorEnd: ME 1 Pipe 1.
+RgpEventProcessorEnd: ME 1 Pipe 2.
+RgpEventProcessorEnd: ME 1 Pipe 3.
+RgpEventProcessorEnd: ME 2 Pipe 0.
+RgpEventProcessorEnd: ME 2 Pipe 1.
+RgpEventProcessorEnd: ME 2 Pipe 2.
+RgpEventProcessorEnd: ME 2 Pipe 3.
+Slot 	 AlocatorBytesLeft 	 TraceEntriesDiscarded 	 TraceEntriesDiscardedBytes 	 InvalidWaveInstCount 	 ImmedCount
+Unused Allocators: 19200 out of 19200. Used allocators: 0
+Null Allocators: 0
+Perfectly Filled Allocators: 0
+Overflow Allocators: 0
+RGP data set loaded in 64ms.
+RgpProfileManager::OnProfileLoadComplete

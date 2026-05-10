@@ -5,6 +5,9 @@
 
 #include "vulkanexamplebase.h"
 
+#include <algorithm>
+#include <fstream>
+
 // Koch edge count is 3 * 4^depth. The shader receives the same values via
 // specialization constants; keep these defines in sync with headless.comp.
 #define MAX_DEPTH 8
@@ -13,6 +16,9 @@
 #define QUEUE_SIZE EXPECTED_EDGES
 #define NUM_WORKGROUPS 96
 #define NODE_C_START 72
+#define MAX_QUEUE_SHARDS 256
+#define Q1_QUEUE_SHARDS_DEFAULT 256
+#define Q2_QUEUE_SHARDS_DEFAULT 256
 
 enum TimestampQuery : uint32_t {
 	TimestampFrameStart = 0,
@@ -28,39 +34,29 @@ struct QueueControl {
 	uint32_t head;
 	uint32_t tail;
 	uint32_t count;
+	uint32_t pad;
+};
+
+struct QueueMetrics {
+	uint32_t enqueueAttempts;
+	uint32_t enqueueSuccess;
+	uint32_t enqueueCasFail;
+	uint32_t enqueueFull;
+	uint32_t dequeueAttempts;
+	uint32_t dequeueSuccess;
+	uint32_t dequeueCasFail;
+	uint32_t dequeueEmpty;
+	uint32_t readyExchange;
+	uint32_t readyCasAttempts;
+	uint32_t readyCasSuccess;
+	uint32_t readyCasFail;
+	uint32_t readyMaxSpin;
+	uint32_t highWater;
 };
 
 struct DebugCounters {
-	uint32_t q1EnqueueAttempts;
-	uint32_t q1EnqueueSuccess;
-	uint32_t q1EnqueueCasFail;
-	uint32_t q1EnqueueFull;
-	uint32_t q1DequeueAttempts;
-	uint32_t q1DequeueSuccess;
-	uint32_t q1DequeueCasFail;
-	uint32_t q1DequeueEmpty;
-	uint32_t q1ReadyExchange;
-	uint32_t q1ReadyCasAttempts;
-	uint32_t q1ReadyCasSuccess;
-	uint32_t q1ReadyCasFail;
-	uint32_t q1ReadyMaxSpin;
-	uint32_t q1HighWater;
-
-	uint32_t q2EnqueueAttempts;
-	uint32_t q2EnqueueSuccess;
-	uint32_t q2EnqueueCasFail;
-	uint32_t q2EnqueueFull;
-	uint32_t q2DequeueAttempts;
-	uint32_t q2DequeueSuccess;
-	uint32_t q2DequeueCasFail;
-	uint32_t q2DequeueEmpty;
-	uint32_t q2ReadyExchange;
-	uint32_t q2ReadyCasAttempts;
-	uint32_t q2ReadyCasSuccess;
-	uint32_t q2ReadyCasFail;
-	uint32_t q2ReadyMaxSpin;
-	uint32_t q2HighWater;
-
+	QueueMetrics q1Shards[MAX_QUEUE_SHARDS];
+	QueueMetrics q2Shards[MAX_QUEUE_SHARDS];
 	uint32_t nodeASeedEdges;
 	uint32_t nodeBTasks;
 	uint32_t nodeBSubdivideTasks;
@@ -72,8 +68,8 @@ struct DebugCounters {
 };
 
 struct ControlBlock {
-	QueueControl q1;
-	QueueControl q2;
+	QueueControl q1[MAX_QUEUE_SHARDS];
+	QueueControl q2[MAX_QUEUE_SHARDS];
 	uint32_t stopFlag;
 	uint32_t totalProcessed;
 	uint32_t vertexCount;
@@ -87,8 +83,10 @@ struct Task {
 	uint32_t payload[6];
 };
 
-static_assert(sizeof(DebugCounters) == 36u * sizeof(uint32_t));
-static_assert(sizeof(ControlBlock) == 46u * sizeof(uint32_t));
+static_assert(sizeof(QueueControl) == 4u * sizeof(uint32_t));
+static_assert(sizeof(QueueMetrics) == 14u * sizeof(uint32_t));
+static_assert(sizeof(DebugCounters) == (MAX_QUEUE_SHARDS * 14u * 2u + 8u) * sizeof(uint32_t));
+static_assert(sizeof(ControlBlock) == (MAX_QUEUE_SHARDS * 4u * 2u + 4u + MAX_QUEUE_SHARDS * 14u * 2u + 8u) * sizeof(uint32_t));
 
 class VulkanExample : public VulkanExampleBase
 {
@@ -119,12 +117,24 @@ public:
 	} graphics{};
 
 	struct {
+		uint32_t q1QueueShards{ Q1_QUEUE_SHARDS_DEFAULT };
+		uint32_t q2QueueShards{ Q2_QUEUE_SHARDS_DEFAULT };
+		uint32_t q1ShardCapacity{ QUEUE_SIZE };
+		uint32_t q2ShardCapacity{ QUEUE_SIZE };
+		uint32_t nodeCStart{ NODE_C_START };
+		bool q1LanePop{ true };
+	} experiment{};
+
+	struct {
 		VkQueryPool queryPool{ VK_NULL_HANDLE };
 		bool enabled{ false };
 		bool stdoutEnabled{ false };
+		bool shaderCountersEnabled{ false };
 		bool timestampsSupported{ false };
 		bool stdoutHeaderPrinted{ false };
+		bool fileHeaderPrinted{ false };
 		uint32_t stdoutInterval{ 60 };
+		std::ofstream fileStream{};
 		uint64_t completedFrames{ 0 };
 		std::array<bool, maxConcurrentFrames> submitted{};
 		std::array<VkBuffer, maxConcurrentFrames> readbackBuf{};
@@ -151,6 +161,7 @@ public:
 	{
 		title = "Koch Snowflake - Persistent Thread Generator (Per-Frame Compute)";
 		settings.vsync = false;
+		configureExperimentFromArgs();
 		configureMetricsFromArgs();
 	}
 
@@ -222,13 +233,62 @@ public:
 		return fallback;
 	}
 
+	const char* getArgString(const char* name) const
+	{
+		for (size_t i = 0; i + 1 < args.size(); i++) {
+			if (strcmp(args[i], name) == 0) {
+				return args[i + 1];
+			}
+		}
+		return nullptr;
+	}
+
+	void configureExperimentFromArgs()
+	{
+		experiment.q1QueueShards = getArgValue("--wg-queue-shards", experiment.q1QueueShards);
+		if (experiment.q1QueueShards > MAX_QUEUE_SHARDS) {
+			experiment.q1QueueShards = MAX_QUEUE_SHARDS;
+		}
+		if ((QUEUE_SIZE % experiment.q1QueueShards) != 0u) {
+			experiment.q1QueueShards = Q1_QUEUE_SHARDS_DEFAULT;
+		}
+		experiment.q1ShardCapacity = QUEUE_SIZE / experiment.q1QueueShards;
+		experiment.q2QueueShards = getArgValue("--wg-q2-shards", experiment.q2QueueShards);
+		if (experiment.q2QueueShards > MAX_QUEUE_SHARDS) {
+			experiment.q2QueueShards = MAX_QUEUE_SHARDS;
+		}
+		if ((QUEUE_SIZE % experiment.q2QueueShards) != 0u) {
+			experiment.q2QueueShards = Q2_QUEUE_SHARDS_DEFAULT;
+		}
+		experiment.q2ShardCapacity = QUEUE_SIZE / experiment.q2QueueShards;
+		experiment.nodeCStart = getArgValue("--wg-node-c-start", experiment.nodeCStart);
+		if (experiment.nodeCStart >= NUM_WORKGROUPS) {
+			experiment.nodeCStart = NUM_WORKGROUPS - 1;
+		}
+		if (hasArg("--wg-q1-lane-pop")) {
+			experiment.q1LanePop = true;
+		}
+		if (hasArg("--wg-no-q1-lane-pop")) {
+			experiment.q1LanePop = false;
+		}
+	}
+
 	void configureMetricsFromArgs()
 	{
-		metrics.stdoutEnabled = hasArg("--wg-metrics-stdout");
-		metrics.enabled = hasArg("--wg-metrics") || metrics.stdoutEnabled;
+		const bool timestampsOnly = hasArg("--wg-timestamps-only");
+		metrics.stdoutEnabled = hasArg("--wg-metrics-stdout") || timestampsOnly;
+		if (const char* fileName = getArgString("--wg-metrics-file")) {
+			metrics.fileStream.open(fileName, std::ios::out | std::ios::trunc);
+		}
+		metrics.enabled = hasArg("--wg-metrics") || metrics.stdoutEnabled || metrics.fileStream.is_open();
+		metrics.shaderCountersEnabled = metrics.enabled && !timestampsOnly && !hasArg("--wg-no-shader-metrics");
 		if (hasArg("--wg-no-metrics")) {
 			metrics.enabled = false;
 			metrics.stdoutEnabled = false;
+			metrics.shaderCountersEnabled = false;
+			if (metrics.fileStream.is_open()) {
+				metrics.fileStream.close();
+			}
 		}
 		metrics.stdoutInterval = getArgValue("--wg-metrics-interval", metrics.stdoutInterval);
 
@@ -347,22 +407,31 @@ public:
 			uint32_t nodeCStart;
 			uint32_t maxDepthEdges;
 			uint32_t enableShaderMetrics;
+			uint32_t q1QueueShards;
+			uint32_t q2QueueShards;
+			uint32_t enableQ1LanePop;
 		} specData = {
 			QUEUE_SIZE,
 			MAX_DEPTH,
-			NODE_C_START,
+			experiment.nodeCStart,
 			EXPECTED_EDGES,
-			metrics.enabled ? 1u : 0u
+			metrics.shaderCountersEnabled ? 1u : 0u,
+			experiment.q1QueueShards,
+			experiment.q2QueueShards,
+			experiment.q1LanePop ? 1u : 0u
 		};
-		VkSpecializationMapEntry specEntries[5] = {
+		VkSpecializationMapEntry specEntries[8] = {
 			{ 0, offsetof(decltype(specData), queueSize),     sizeof(uint32_t) },
 			{ 1, offsetof(decltype(specData), maxDepth),      sizeof(uint32_t) },
 			{ 2, offsetof(decltype(specData), nodeCStart),    sizeof(uint32_t) },
 			{ 3, offsetof(decltype(specData), maxDepthEdges), sizeof(uint32_t) },
-			{ 4, offsetof(decltype(specData), enableShaderMetrics), sizeof(uint32_t) }
+			{ 4, offsetof(decltype(specData), enableShaderMetrics), sizeof(uint32_t) },
+			{ 5, offsetof(decltype(specData), q1QueueShards), sizeof(uint32_t) },
+			{ 6, offsetof(decltype(specData), q2QueueShards), sizeof(uint32_t) },
+			{ 7, offsetof(decltype(specData), enableQ1LanePop), sizeof(uint32_t) }
 		};
 		VkSpecializationInfo specInfo = {};
-		specInfo.mapEntryCount = 5;
+		specInfo.mapEntryCount = 8;
 		specInfo.pMapEntries = specEntries;
 		specInfo.dataSize = sizeof(specData);
 		specInfo.pData = &specData;
@@ -450,6 +519,93 @@ public:
 		return denominator == 0 ? 0.0f : static_cast<float>(numerator) / static_cast<float>(denominator);
 	}
 
+	float ratio(uint64_t numerator, uint64_t denominator) const
+	{
+		return denominator == 0 ? 0.0f : static_cast<float>(static_cast<double>(numerator) / static_cast<double>(denominator));
+	}
+
+	QueueMetrics aggregateQ1Metrics(const ControlBlock& control) const
+	{
+		QueueMetrics total{};
+		for (uint32_t i = 0; i < experiment.q1QueueShards; i++) {
+			const QueueMetrics& shard = control.metrics.q1Shards[i];
+			total.enqueueAttempts += shard.enqueueAttempts;
+			total.enqueueSuccess += shard.enqueueSuccess;
+			total.enqueueCasFail += shard.enqueueCasFail;
+			total.enqueueFull += shard.enqueueFull;
+			total.dequeueAttempts += shard.dequeueAttempts;
+			total.dequeueSuccess += shard.dequeueSuccess;
+			total.dequeueCasFail += shard.dequeueCasFail;
+			total.dequeueEmpty += shard.dequeueEmpty;
+			total.readyExchange += shard.readyExchange;
+			total.readyCasAttempts += shard.readyCasAttempts;
+			total.readyCasSuccess += shard.readyCasSuccess;
+			total.readyCasFail += shard.readyCasFail;
+			total.readyMaxSpin = std::max(total.readyMaxSpin, shard.readyMaxSpin);
+			total.highWater += shard.highWater;
+		}
+		return total;
+	}
+
+	QueueMetrics aggregateQ2Metrics(const ControlBlock& control) const
+	{
+		QueueMetrics total{};
+		for (uint32_t i = 0; i < experiment.q2QueueShards; i++) {
+			const QueueMetrics& shard = control.metrics.q2Shards[i];
+			total.enqueueAttempts += shard.enqueueAttempts;
+			total.enqueueSuccess += shard.enqueueSuccess;
+			total.enqueueCasFail += shard.enqueueCasFail;
+			total.enqueueFull += shard.enqueueFull;
+			total.dequeueAttempts += shard.dequeueAttempts;
+			total.dequeueSuccess += shard.dequeueSuccess;
+			total.dequeueCasFail += shard.dequeueCasFail;
+			total.dequeueEmpty += shard.dequeueEmpty;
+			total.readyExchange += shard.readyExchange;
+			total.readyCasAttempts += shard.readyCasAttempts;
+			total.readyCasSuccess += shard.readyCasSuccess;
+			total.readyCasFail += shard.readyCasFail;
+			total.readyMaxSpin = std::max(total.readyMaxSpin, shard.readyMaxSpin);
+			total.highWater += shard.highWater;
+		}
+		return total;
+	}
+
+	uint32_t maxQ1Metric(const ControlBlock& control, uint32_t QueueMetrics::*field) const
+	{
+		uint32_t value = 0;
+		for (uint32_t i = 0; i < experiment.q1QueueShards; i++) {
+			value = std::max(value, control.metrics.q1Shards[i].*field);
+		}
+		return value;
+	}
+
+	float meanQ1Metric(const ControlBlock& control, uint32_t QueueMetrics::*field) const
+	{
+		uint64_t total = 0;
+		for (uint32_t i = 0; i < experiment.q1QueueShards; i++) {
+			total += control.metrics.q1Shards[i].*field;
+		}
+		return static_cast<float>(static_cast<double>(total) / static_cast<double>(experiment.q1QueueShards));
+	}
+
+	uint32_t maxQ1MetricSum(const ControlBlock& control, uint32_t QueueMetrics::*first, uint32_t QueueMetrics::*second) const
+	{
+		uint32_t value = 0;
+		for (uint32_t i = 0; i < experiment.q1QueueShards; i++) {
+			value = std::max(value, control.metrics.q1Shards[i].*first + control.metrics.q1Shards[i].*second);
+		}
+		return value;
+	}
+
+	float meanQ1MetricSum(const ControlBlock& control, uint32_t QueueMetrics::*first, uint32_t QueueMetrics::*second) const
+	{
+		uint64_t total = 0;
+		for (uint32_t i = 0; i < experiment.q1QueueShards; i++) {
+			total += static_cast<uint64_t>(control.metrics.q1Shards[i].*first) + static_cast<uint64_t>(control.metrics.q1Shards[i].*second);
+		}
+		return static_cast<float>(static_cast<double>(total) / static_cast<double>(experiment.q1QueueShards));
+	}
+
 	void collectCompletedMetrics(uint32_t bufferIndex)
 	{
 		if (!metrics.enabled || !metrics.submitted[bufferIndex]) {
@@ -495,61 +651,108 @@ public:
 		metrics.submitted[bufferIndex] = false;
 	}
 
-	void printMetricsToStdout()
+	void writeMetrics(std::ostream& out, bool& headerPrinted)
 	{
-		if (!metrics.stdoutEnabled || ((metrics.completedFrames % metrics.stdoutInterval) != 0)) {
-			return;
-		}
-
 		const ControlBlock& control = metrics.latest.control;
 		const DebugCounters& c = control.metrics;
-		if (!metrics.stdoutHeaderPrinted) {
-			std::cout
-				<< "WG_METRICS_HEADER frame,gpu_frame_ms,reset_ms,reset_barrier_ms,compute_ms,metrics_copy_ms,render_ms,"
+		const QueueMetrics q1 = aggregateQ1Metrics(control);
+		const QueueMetrics q2 = aggregateQ2Metrics(control);
+		const float q1DeqAttemptsMean = meanQ1Metric(control, &QueueMetrics::dequeueAttempts);
+		const uint32_t q1DeqAttemptsMax = maxQ1Metric(control, &QueueMetrics::dequeueAttempts);
+		const float q1EnqAttemptsMean = meanQ1Metric(control, &QueueMetrics::enqueueAttempts);
+		const uint32_t q1EnqAttemptsMax = maxQ1Metric(control, &QueueMetrics::enqueueAttempts);
+		const float q1DeqCasFailMean = meanQ1Metric(control, &QueueMetrics::dequeueCasFail);
+		const uint32_t q1DeqCasFailMax = maxQ1Metric(control, &QueueMetrics::dequeueCasFail);
+		const float q1DeqProbeMean = meanQ1MetricSum(control, &QueueMetrics::dequeueAttempts, &QueueMetrics::dequeueEmpty);
+		const uint32_t q1DeqProbeMax = maxQ1MetricSum(control, &QueueMetrics::dequeueAttempts, &QueueMetrics::dequeueEmpty);
+		const float q1HighWaterMean = meanQ1Metric(control, &QueueMetrics::highWater);
+		const uint32_t q1HighWaterMax = maxQ1Metric(control, &QueueMetrics::highWater);
+		const float q1DeqAttemptsImbalance = q1DeqAttemptsMean > 0.0f ? static_cast<float>(q1DeqAttemptsMax) / q1DeqAttemptsMean : 0.0f;
+		const float q1EnqAttemptsImbalance = q1EnqAttemptsMean > 0.0f ? static_cast<float>(q1EnqAttemptsMax) / q1EnqAttemptsMean : 0.0f;
+		const float q1DeqProbeImbalance = q1DeqProbeMean > 0.0f ? static_cast<float>(q1DeqProbeMax) / q1DeqProbeMean : 0.0f;
+
+		if (!headerPrinted) {
+			out
+				<< "WG_METRICS_HEADER frame,q1_shards,q1_shard_capacity,gpu_frame_ms,reset_ms,reset_barrier_ms,compute_ms,metrics_copy_ms,render_ms,"
+				<< "q2_shards,q2_shard_capacity,"
 				<< "edges,vertices,edges_per_ms,vertices_per_ms,"
+				<< "q1_deq_attempt_mean,q1_deq_attempt_max,q1_deq_attempt_imbalance,q1_deq_cas_fail_mean,q1_deq_cas_fail_max,"
+				<< "q1_deq_probe_mean,q1_deq_probe_max,q1_deq_probe_imbalance,"
+				<< "q1_enq_attempt_mean,q1_enq_attempt_max,q1_enq_attempt_imbalance,q1_high_water_mean,q1_high_water_max,"
 				<< "q1_enq_ok,q1_enq_cas_fail,q1_enq_full,q1_deq_ok,q1_deq_cas_fail,q1_deq_empty,q1_ready_cas_fail,q1_ready_max_spin,q1_high_water,"
 				<< "q2_enq_ok,q2_enq_cas_fail,q2_enq_full,q2_deq_ok,q2_deq_cas_fail,q2_deq_empty,q2_ready_cas_fail,q2_ready_max_spin,q2_high_water,"
 				<< "node_a_seed,node_b_tasks,node_b_subdivide,node_b_final,node_c_output,stop_writes\n";
-			metrics.stdoutHeaderPrinted = true;
+			headerPrinted = true;
 		}
 
-		std::cout << std::fixed << std::setprecision(4)
+		out << std::fixed << std::setprecision(4)
 			<< "WG_METRICS "
 			<< metrics.completedFrames << ","
+			<< experiment.q1QueueShards << ","
+			<< experiment.q1ShardCapacity << ","
 			<< metrics.latest.gpuFrameMs << ","
 			<< metrics.latest.resetMs << ","
 			<< metrics.latest.resetBarrierMs << ","
 			<< metrics.latest.computeMs << ","
 			<< metrics.latest.metricsCopyMs << ","
 			<< metrics.latest.renderMs << ","
+			<< experiment.q2QueueShards << ","
+			<< experiment.q2ShardCapacity << ","
 			<< control.totalProcessed << ","
 			<< control.vertexCount << ","
 			<< metrics.latest.edgesPerMs << ","
 			<< metrics.latest.verticesPerMs << ","
-			<< c.q1EnqueueSuccess << ","
-			<< c.q1EnqueueCasFail << ","
-			<< c.q1EnqueueFull << ","
-			<< c.q1DequeueSuccess << ","
-			<< c.q1DequeueCasFail << ","
-			<< c.q1DequeueEmpty << ","
-			<< c.q1ReadyCasFail << ","
-			<< c.q1ReadyMaxSpin << ","
-			<< c.q1HighWater << ","
-			<< c.q2EnqueueSuccess << ","
-			<< c.q2EnqueueCasFail << ","
-			<< c.q2EnqueueFull << ","
-			<< c.q2DequeueSuccess << ","
-			<< c.q2DequeueCasFail << ","
-			<< c.q2DequeueEmpty << ","
-			<< c.q2ReadyCasFail << ","
-			<< c.q2ReadyMaxSpin << ","
-			<< c.q2HighWater << ","
+			<< q1DeqAttemptsMean << ","
+			<< q1DeqAttemptsMax << ","
+			<< q1DeqAttemptsImbalance << ","
+			<< q1DeqCasFailMean << ","
+			<< q1DeqCasFailMax << ","
+			<< q1DeqProbeMean << ","
+			<< q1DeqProbeMax << ","
+			<< q1DeqProbeImbalance << ","
+			<< q1EnqAttemptsMean << ","
+			<< q1EnqAttemptsMax << ","
+			<< q1EnqAttemptsImbalance << ","
+			<< q1HighWaterMean << ","
+			<< q1HighWaterMax << ","
+			<< q1.enqueueSuccess << ","
+			<< q1.enqueueCasFail << ","
+			<< q1.enqueueFull << ","
+			<< q1.dequeueSuccess << ","
+			<< q1.dequeueCasFail << ","
+			<< q1.dequeueEmpty << ","
+			<< q1.readyCasFail << ","
+			<< q1.readyMaxSpin << ","
+			<< q1.highWater << ","
+			<< q2.enqueueSuccess << ","
+			<< q2.enqueueCasFail << ","
+			<< q2.enqueueFull << ","
+			<< q2.dequeueSuccess << ","
+			<< q2.dequeueCasFail << ","
+			<< q2.dequeueEmpty << ","
+			<< q2.readyCasFail << ","
+			<< q2.readyMaxSpin << ","
+			<< q2.highWater << ","
 			<< c.nodeASeedEdges << ","
 			<< c.nodeBTasks << ","
 			<< c.nodeBSubdivideTasks << ","
 			<< c.nodeBFinalTasks << ","
 			<< c.nodeCOutputEdges << ","
 			<< c.stopFlagWrites << "\n";
+	}
+
+	void printMetricsToStdout()
+	{
+		if ((metrics.completedFrames % metrics.stdoutInterval) != 0) {
+			return;
+		}
+		if (metrics.stdoutEnabled) {
+			writeMetrics(std::cout, metrics.stdoutHeaderPrinted);
+		}
+		if (metrics.fileStream.is_open()) {
+			writeMetrics(metrics.fileStream, metrics.fileHeaderPrinted);
+			metrics.fileStream.flush();
+		}
 	}
 
 	void buildCommandBuffers()
@@ -687,6 +890,8 @@ public:
 
 		const ControlBlock& control = metrics.latest.control;
 		const DebugCounters& c = control.metrics;
+		const QueueMetrics q1 = aggregateQ1Metrics(control);
+		const QueueMetrics q2 = aggregateQ2Metrics(control);
 
 		if (overlay->header("GPU metrics")) {
 			if (metrics.latest.timestampsValid) {
@@ -710,23 +915,26 @@ public:
 		}
 
 		if (overlay->header("Queue pressure")) {
-			overlay->text("Q1 enq ok/CAS fail/full: %u / %u / %u", c.q1EnqueueSuccess, c.q1EnqueueCasFail, c.q1EnqueueFull);
-			overlay->text("Q1 deq ok/CAS fail/empty: %u / %u / %u", c.q1DequeueSuccess, c.q1DequeueCasFail, c.q1DequeueEmpty);
-			overlay->text("Q1 high-water: %u", c.q1HighWater);
-			overlay->text("Q2 enq ok/CAS fail/full: %u / %u / %u", c.q2EnqueueSuccess, c.q2EnqueueCasFail, c.q2EnqueueFull);
-			overlay->text("Q2 deq ok/CAS fail/empty: %u / %u / %u", c.q2DequeueSuccess, c.q2DequeueCasFail, c.q2DequeueEmpty);
-			overlay->text("Q2 high-water: %u", c.q2HighWater);
+			overlay->text("Q1 shards/capacity: %u / %u", experiment.q1QueueShards, experiment.q1ShardCapacity);
+			overlay->text("Q2 shards/capacity: %u / %u", experiment.q2QueueShards, experiment.q2ShardCapacity);
+			overlay->text("Q1 enq ok/CAS fail/full: %u / %u / %u", q1.enqueueSuccess, q1.enqueueCasFail, q1.enqueueFull);
+			overlay->text("Q1 deq ok/CAS fail/empty: %u / %u / %u", q1.dequeueSuccess, q1.dequeueCasFail, q1.dequeueEmpty);
+			overlay->text("Q1 high-water sum/max: %u / %u", q1.highWater, maxQ1Metric(control, &QueueMetrics::highWater));
+			overlay->text("Q2 enq ok/CAS fail/full: %u / %u / %u", q2.enqueueSuccess, q2.enqueueCasFail, q2.enqueueFull);
+			overlay->text("Q2 deq ok/CAS fail/empty: %u / %u / %u", q2.dequeueSuccess, q2.dequeueCasFail, q2.dequeueEmpty);
+			overlay->text("Q2 high-water: %u", q2.highWater);
 		}
 
 		if (overlay->header("Atomic pressure")) {
-			overlay->text("Q1 CAS fail/success: %.2f", ratio(c.q1EnqueueCasFail + c.q1DequeueCasFail + c.q1ReadyCasFail,
-				c.q1EnqueueSuccess + c.q1DequeueSuccess + c.q1ReadyCasSuccess));
-			overlay->text("Q2 CAS fail/success: %.2f", ratio(c.q2EnqueueCasFail + c.q2DequeueCasFail + c.q2ReadyCasFail,
-				c.q2EnqueueSuccess + c.q2DequeueSuccess + c.q2ReadyCasSuccess));
-			overlay->text("Q1 ready CAS attempts/fail/max spin: %u / %u / %u", c.q1ReadyCasAttempts, c.q1ReadyCasFail, c.q1ReadyMaxSpin);
-			overlay->text("Q2 ready CAS attempts/fail/max spin: %u / %u / %u", c.q2ReadyCasAttempts, c.q2ReadyCasFail, c.q2ReadyMaxSpin);
-			overlay->text("Workgroups B/C: %u / %u", NODE_C_START, NUM_WORKGROUPS - NODE_C_START);
-			overlay->text("Shader metrics: %s", metrics.enabled ? "on" : "off");
+			overlay->text("Q1 CAS fail/success: %.2f", ratio(q1.enqueueCasFail + q1.dequeueCasFail + q1.readyCasFail,
+				q1.enqueueSuccess + q1.dequeueSuccess + q1.readyCasSuccess));
+			overlay->text("Q2 CAS fail/success: %.2f", ratio(q2.enqueueCasFail + q2.dequeueCasFail + q2.readyCasFail,
+				q2.enqueueSuccess + q2.dequeueSuccess + q2.readyCasSuccess));
+			overlay->text("Q1 ready CAS attempts/fail/max spin: %u / %u / %u", q1.readyCasAttempts, q1.readyCasFail, q1.readyMaxSpin);
+			overlay->text("Q2 ready CAS attempts/fail/max spin: %u / %u / %u", q2.readyCasAttempts, q2.readyCasFail, q2.readyMaxSpin);
+			overlay->text("Workgroups B/C: %u / %u", experiment.nodeCStart, NUM_WORKGROUPS - experiment.nodeCStart);
+			overlay->text("Q1 lane pop: %s", experiment.q1LanePop ? "on" : "off");
+			overlay->text("Shader metrics: %s", metrics.shaderCountersEnabled ? "on" : "off");
 		}
 	}
 
