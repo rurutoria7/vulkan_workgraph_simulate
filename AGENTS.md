@@ -27,6 +27,18 @@ genuinely requires it.
   rules.
 - `reports/PPTX_NAMING.md`: formal PowerPoint naming convention.
 
+## Current Research Backbone
+
+- For the May 2026 workgraph queue investigation, use
+  `reports/2026-05/metrics/q2_shards_20260510/research_backbone_20260510.md`
+  as the canonical bottleneck timeline before interpreting isolated CSVs or
+  profiler screenshots.
+- Adopted path: validate RDP/RGP occupancy limits -> fix clean duration
+  measurement -> tune B/C ratio -> add Q1/Q2 sharding -> enable Q1 lane-pop ->
+  raise Q1/Q2 shard count to 256.
+- Wave/request batching was investigated but is not part of the current main
+  optimized path.
+
 ## Build And Run
 
 Requirements:
@@ -74,8 +86,26 @@ shader binary. Keep it in sync while it remains in the repository.
 - Keep report assets out of the repository root; use `reports/` and
   `tools/reports/` instead.
 
+## Experiment Branching Rules
+
+- All experiment and optimization progress should be visible in the git commit
+  tree. Do not keep meaningful feature work only in loose files or uncommitted
+  local state.
+- Create a new branch for each new feature, optimization direction, or
+  controlled experiment before implementing it.
+- If a feature branch gets follow-up improvements, fixes, reruns, or report
+  updates, commit those steps on the same branch so the branch history shows how
+  the idea evolved.
+- Keep commits scoped to the experiment step they represent: implementation,
+  measurement data, analysis report, and cleanup should be separated when that
+  makes the investigation easier to audit.
+
 ## Profiling Analysis Rules
 
+- In this repository's May 2026 traces, RGP Wavefront occupancy showing
+  `0` in-flight threads was not reliable evidence that the compute dispatch had
+  ended or was stalled only in memory/atomic work; see the research backbone
+  before using that view as evidence.
 - Do not force-fit explanations for profiling results. If the evidence is
   incomplete, say what is unknown and propose a targeted check instead of
   filling the gap with a plausible story.
