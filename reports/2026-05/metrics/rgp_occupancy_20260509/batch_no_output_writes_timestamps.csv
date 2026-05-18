@@ -1,0 +1,7 @@
+frame,gpu_frame_ms,reset_ms,reset_barrier_ms,compute_ms,metrics_copy_ms,render_ms,edges,vertices,edges_per_ms,vertices_per_ms,q1_enq_ok,q1_enq_cas_fail,q1_enq_full,q1_deq_ok,q1_deq_cas_fail,q1_deq_empty,q1_ready_cas_fail,q1_ready_max_spin,q1_high_water,q1_deq_batches,q1_deq_batch_slots,q1_deq_batch_cas_attempts,q1_deq_batch_cas_fail,q1_deq_batch_empty,q1_deq_batch_partial,q1_deq_slots_per_batch,q1_deq_batch_enabled,q2_enq_ok,q2_enq_cas_fail,q2_enq_full,q2_deq_ok,q2_deq_cas_fail,q2_deq_empty,q2_ready_cas_fail,q2_ready_max_spin,q2_high_water,node_a_seed,node_b_tasks,node_b_subdivide,node_b_final,node_c_output,stop_writes
+1,36.9830,0.0122,0.0075,36.9160,0.0234,0.0239,196608,393216,5325.8267,10651.6533,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0.0000,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+2,30.2649,0.0085,0.0072,30.2113,0.0233,0.0146,196608,393216,6507.7676,13015.5352,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0.0000,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+3,30.0349,0.0081,0.0074,29.9792,0.0228,0.0174,196608,393216,6558.1470,13116.2939,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0.0000,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+4,31.1670,0.0080,0.0074,31.1126,0.0222,0.0168,196608,393216,6319.2402,12638.4805,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0.0000,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+5,30.2425,0.0080,0.0073,30.1887,0.0221,0.0163,196608,393216,6512.6396,13025.2793,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0.0000,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+6,30.6370,0.0080,0.0074,30.5861,0.0221,0.0134,196608,393216,6428.0137,12856.0273,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0.0000,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0

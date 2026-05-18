@@ -1,0 +1,398 @@
+#version 450
+
+layout(local_size_x = 32) in;
+
+#define MAX_QUEUE_SHARDS 256
+
+struct Task { uint payload[6]; };
+struct QueueControl { uint head; uint tail; uint count; uint pad; };
+struct QueueMetrics {
+    uint enqueueAttempts;
+    uint enqueueSuccess;
+    uint enqueueCasFail;
+    uint enqueueFull;
+    uint dequeueAttempts;
+    uint dequeueSuccess;
+    uint dequeueCasFail;
+    uint dequeueEmpty;
+    uint readyExchange;
+    uint readyCasAttempts;
+    uint readyCasSuccess;
+    uint readyCasFail;
+    uint readyMaxSpin;
+    uint highWater;
+};
+struct DebugCounters {
+    QueueMetrics q1Shards[MAX_QUEUE_SHARDS];
+    QueueMetrics q2Shards[MAX_QUEUE_SHARDS];
+
+    uint nodeASeedEdges;
+    uint nodeBTasks;
+    uint nodeBSubdivideTasks;
+    uint nodeBFinalTasks;
+    uint nodeCOutputEdges;
+    uint vertexWriteCalls;
+    uint stopFlagWrites;
+    uint pushStopExits;
+};
+
+layout(std430, binding = 0) coherent buffer ControlBlock {
+    QueueControl q1[MAX_QUEUE_SHARDS];
+    QueueControl q2[MAX_QUEUE_SHARDS];
+    uint stopFlag;
+    uint totalProcessed;
+    uint vertexCount;
+    uint seedDone;
+    DebugCounters metrics;
+} control;
+
+layout(std430, binding = 1) coherent buffer Queue1 { Task tasks[]; } queue1;
+layout(std430, binding = 2) coherent buffer Queue2 { Task tasks[]; } queue2;
+layout(std430, binding = 3) coherent buffer OutputVertices { vec2 vertices[]; } output_vb;
+
+layout (constant_id = 0) const uint QUEUE_SIZE = 196608u;
+layout (constant_id = 1) const uint MAX_DEPTH = 8u;
+layout (constant_id = 2) const uint NODE_C_START = 72;
+layout (constant_id = 3) const uint MAX_DEPTH_EDGES = 196608u;
+layout (constant_id = 4) const uint ENABLE_SHADER_METRICS = 0u;
+layout (constant_id = 5) const uint Q1_QUEUE_SHARDS = 256u;
+layout (constant_id = 6) const uint Q2_QUEUE_SHARDS = 256u;
+layout (constant_id = 7) const uint ENABLE_Q1_LANE_POP = 1u;
+
+// payload[5] is a per-slot ready flag (0=empty, 1=ready)
+// All accesses use atomics for cross-CU visibility on RDNA 3
+
+#define METRIC_ADD(counter, value) if (ENABLE_SHADER_METRICS != 0u) { atomicAdd(counter, value); }
+#define METRIC_MAX(counter, value) if (ENABLE_SHADER_METRICS != 0u) { atomicMax(counter, value); }
+
+uint q1ShardCapacity() {
+    return QUEUE_SIZE / Q1_QUEUE_SHARDS;
+}
+
+uint q2ShardCapacity() {
+    return QUEUE_SIZE / Q2_QUEUE_SHARDS;
+}
+
+uint mixHash(uint x) {
+    x ^= x >> 16;
+    x *= 0x7feb352du;
+    x ^= x >> 15;
+    x *= 0x846ca68bu;
+    x ^= x >> 16;
+    return x;
+}
+
+uint chooseQ1Shard(uint p0, uint p1, uint p2, uint p3, uint p4) {
+    if (Q1_QUEUE_SHARDS == 1u) {
+        return 0u;
+    }
+    uint h = p0 ^ (p1 * 0x9e3779b9u) ^ (p2 * 0x85ebca6bu) ^ (p3 * 0xc2b2ae35u) ^ (p4 * 0x27d4eb2fu);
+    h ^= gl_WorkGroupID.x * 0x165667b1u;
+    h ^= gl_LocalInvocationID.x * 0xd3a2646cu;
+    return mixHash(h) % Q1_QUEUE_SHARDS;
+}
+
+uint chooseQ2Shard(uint p0, uint p1, uint p2, uint p3, uint p4) {
+    if (Q2_QUEUE_SHARDS == 1u) {
+        return 0u;
+    }
+    uint h = p0 ^ (p1 * 0x9e3779b9u) ^ (p2 * 0x85ebca6bu) ^ (p3 * 0xc2b2ae35u) ^ (p4 * 0x27d4eb2fu);
+    h ^= gl_WorkGroupID.x * 0x9e3779b9u;
+    h ^= gl_LocalInvocationID.x * 0x85ebca6bu;
+    return mixHash(h) % Q2_QUEUE_SHARDS;
+}
+
+bool tryPushQ1Shard(uint shard, uint p0, uint p1, uint p2, uint p3, uint p4) {
+    uint capacity = q1ShardCapacity();
+    METRIC_ADD(control.metrics.q1Shards[shard].enqueueAttempts, 1u);
+    uint cur = atomicAdd(control.q1[shard].count, 0u);
+    if (cur < capacity) {
+        if (atomicCompSwap(control.q1[shard].count, cur, cur + 1u) == cur) {
+            METRIC_ADD(control.metrics.q1Shards[shard].enqueueSuccess, 1u);
+            METRIC_MAX(control.metrics.q1Shards[shard].highWater, cur + 1u);
+            uint localSlot = atomicAdd(control.q1[shard].tail, 1u) % capacity;
+            uint slot = shard * capacity + localSlot;
+            queue1.tasks[slot].payload[0] = p0;
+            queue1.tasks[slot].payload[1] = p1;
+            queue1.tasks[slot].payload[2] = p2;
+            queue1.tasks[slot].payload[3] = p3;
+            queue1.tasks[slot].payload[4] = p4;
+            memoryBarrierBuffer();
+            atomicExchange(queue1.tasks[slot].payload[5], 1u);
+            METRIC_ADD(control.metrics.q1Shards[shard].readyExchange, 1u);
+            return true;
+        }
+        METRIC_ADD(control.metrics.q1Shards[shard].enqueueCasFail, 1u);
+    } else {
+        METRIC_ADD(control.metrics.q1Shards[shard].enqueueFull, 1u);
+    }
+    return false;
+}
+
+bool pushQ1FromBase(uint baseShard, uint p0, uint p1, uint p2, uint p3, uint p4) {
+    while (control.stopFlag == 0u) {
+        for (uint i = 0u; i < Q1_QUEUE_SHARDS; i++) {
+            uint shard = (baseShard + i) % Q1_QUEUE_SHARDS;
+            if (tryPushQ1Shard(shard, p0, p1, p2, p3, p4)) {
+                return true;
+            }
+        }
+    }
+    METRIC_ADD(control.metrics.pushStopExits, 1u);
+    return false;
+}
+
+bool pushQ1(uint p0, uint p1, uint p2, uint p3, uint p4) {
+    return pushQ1FromBase(chooseQ1Shard(p0, p1, p2, p3, p4), p0, p1, p2, p3, p4);
+}
+
+bool tryPushQ2Shard(uint shard, uint p0, uint p1, uint p2, uint p3, uint p4) {
+    uint capacity = q2ShardCapacity();
+    METRIC_ADD(control.metrics.q2Shards[shard].enqueueAttempts, 1u);
+    uint cur = atomicAdd(control.q2[shard].count, 0u);
+    if (cur < capacity) {
+        if (atomicCompSwap(control.q2[shard].count, cur, cur + 1u) == cur) {
+            METRIC_ADD(control.metrics.q2Shards[shard].enqueueSuccess, 1u);
+            METRIC_MAX(control.metrics.q2Shards[shard].highWater, cur + 1u);
+            uint localSlot = atomicAdd(control.q2[shard].tail, 1u) % capacity;
+            uint slot = shard * capacity + localSlot;
+            queue2.tasks[slot].payload[0] = p0;
+            queue2.tasks[slot].payload[1] = p1;
+            queue2.tasks[slot].payload[2] = p2;
+            queue2.tasks[slot].payload[3] = p3;
+            queue2.tasks[slot].payload[4] = p4;
+            memoryBarrierBuffer();
+            atomicExchange(queue2.tasks[slot].payload[5], 1u);
+            METRIC_ADD(control.metrics.q2Shards[shard].readyExchange, 1u);
+            return true;
+        }
+        METRIC_ADD(control.metrics.q2Shards[shard].enqueueCasFail, 1u);
+    } else {
+        METRIC_ADD(control.metrics.q2Shards[shard].enqueueFull, 1u);
+    }
+    return false;
+}
+
+bool pushQ2FromBase(uint baseShard, uint p0, uint p1, uint p2, uint p3, uint p4) {
+    while (control.stopFlag == 0) {
+        for (uint i = 0u; i < Q2_QUEUE_SHARDS; i++) {
+            uint shard = (baseShard + i) % Q2_QUEUE_SHARDS;
+            if (tryPushQ2Shard(shard, p0, p1, p2, p3, p4)) {
+                return true;
+            }
+        }
+    }
+    METRIC_ADD(control.metrics.pushStopExits, 1u);
+    return false;
+}
+
+bool pushQ2(uint p0, uint p1, uint p2, uint p3, uint p4) {
+    return pushQ2FromBase(chooseQ2Shard(p0, p1, p2, p3, p4), p0, p1, p2, p3, p4);
+}
+
+bool tryPopQ1Shard(uint shard, out uint p0, out uint p1, out uint p2, out uint p3, out uint depth) {
+    uint capacity = q1ShardCapacity();
+    uint cur = atomicAdd(control.q1[shard].count, 0u);
+    if (cur > 0u) {
+        METRIC_ADD(control.metrics.q1Shards[shard].dequeueAttempts, 1u);
+        if (atomicCompSwap(control.q1[shard].count, cur, cur - 1u) == cur) {
+            METRIC_ADD(control.metrics.q1Shards[shard].dequeueSuccess, 1u);
+            uint localSlot = atomicAdd(control.q1[shard].head, 1u) % capacity;
+            uint slot = shard * capacity + localSlot;
+            uint readySpin = 0u;
+            while (atomicCompSwap(queue1.tasks[slot].payload[5], 1u, 0u) != 1u) {
+                readySpin++;
+                if (control.stopFlag != 0u) {
+                    METRIC_ADD(control.metrics.q1Shards[shard].readyCasAttempts, readySpin);
+                    METRIC_ADD(control.metrics.q1Shards[shard].readyCasFail, readySpin);
+                    METRIC_MAX(control.metrics.q1Shards[shard].readyMaxSpin, readySpin);
+                    return false;
+                }
+            }
+            METRIC_ADD(control.metrics.q1Shards[shard].readyCasAttempts, readySpin + 1u);
+            METRIC_ADD(control.metrics.q1Shards[shard].readyCasSuccess, 1u);
+            METRIC_ADD(control.metrics.q1Shards[shard].readyCasFail, readySpin);
+            METRIC_MAX(control.metrics.q1Shards[shard].readyMaxSpin, readySpin);
+
+            p0 = queue1.tasks[slot].payload[0];
+            p1 = queue1.tasks[slot].payload[1];
+            p2 = queue1.tasks[slot].payload[2];
+            p3 = queue1.tasks[slot].payload[3];
+            depth = queue1.tasks[slot].payload[4];
+            memoryBarrierBuffer();
+            return true;
+        }
+        METRIC_ADD(control.metrics.q1Shards[shard].dequeueCasFail, 1u);
+    } else {
+        METRIC_ADD(control.metrics.q1Shards[shard].dequeueEmpty, 1u);
+    }
+    return false;
+}
+
+bool popQ1(uint wgId, uint localId, out uint p0, out uint p1, out uint p2, out uint p3, out uint depth) {
+    uint worker = wgId * gl_WorkGroupSize.x + localId;
+    uint homeShard = (ENABLE_Q1_LANE_POP != 0u) ? (worker % Q1_QUEUE_SHARDS) : (wgId % Q1_QUEUE_SHARDS);
+    for (uint i = 0u; i < Q1_QUEUE_SHARDS; i++) {
+        uint shard = (homeShard + i) % Q1_QUEUE_SHARDS;
+        if (tryPopQ1Shard(shard, p0, p1, p2, p3, depth)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool tryPopQ2Shard(uint shard, out uint p0, out uint p1, out uint p2, out uint p3) {
+    uint capacity = q2ShardCapacity();
+    uint cur = atomicAdd(control.q2[shard].count, 0u);
+    if (cur > 0u) {
+        METRIC_ADD(control.metrics.q2Shards[shard].dequeueAttempts, 1u);
+        if (atomicCompSwap(control.q2[shard].count, cur, cur - 1u) == cur) {
+            METRIC_ADD(control.metrics.q2Shards[shard].dequeueSuccess, 1u);
+            uint localSlot = atomicAdd(control.q2[shard].head, 1u) % capacity;
+            uint slot = shard * capacity + localSlot;
+            uint readySpin = 0u;
+            while (atomicCompSwap(queue2.tasks[slot].payload[5], 1u, 0u) != 1u) {
+                readySpin++;
+                if (control.stopFlag != 0u) {
+                    METRIC_ADD(control.metrics.q2Shards[shard].readyCasAttempts, readySpin);
+                    METRIC_ADD(control.metrics.q2Shards[shard].readyCasFail, readySpin);
+                    METRIC_MAX(control.metrics.q2Shards[shard].readyMaxSpin, readySpin);
+                    return false;
+                }
+            }
+            METRIC_ADD(control.metrics.q2Shards[shard].readyCasAttempts, readySpin + 1u);
+            METRIC_ADD(control.metrics.q2Shards[shard].readyCasSuccess, 1u);
+            METRIC_ADD(control.metrics.q2Shards[shard].readyCasFail, readySpin);
+            METRIC_MAX(control.metrics.q2Shards[shard].readyMaxSpin, readySpin);
+
+            p0 = queue2.tasks[slot].payload[0];
+            p1 = queue2.tasks[slot].payload[1];
+            p2 = queue2.tasks[slot].payload[2];
+            p3 = queue2.tasks[slot].payload[3];
+            memoryBarrierBuffer();
+            return true;
+        }
+        METRIC_ADD(control.metrics.q2Shards[shard].dequeueCasFail, 1u);
+    } else {
+        METRIC_ADD(control.metrics.q2Shards[shard].dequeueEmpty, 1u);
+    }
+    return false;
+}
+
+bool popQ2(uint wgId, uint localId, out uint p0, out uint p1, out uint p2, out uint p3) {
+    uint worker = (wgId - NODE_C_START) * gl_WorkGroupSize.x + localId;
+    uint homeShard = worker % Q2_QUEUE_SHARDS;
+    for (uint i = 0u; i < Q2_QUEUE_SHARDS; i++) {
+        uint shard = (homeShard + i) % Q2_QUEUE_SHARDS;
+        if (tryPopQ2Shard(shard, p0, p1, p2, p3)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+void main() {
+    uint wgId = gl_WorkGroupID.x;
+    uint localId = gl_LocalInvocationID.x;
+
+    if (wgId == 0 && localId == 0) {
+        if (atomicCompSwap(control.seedDone, 0, 1) == 0) {
+            float s = 0.8;
+            float h = s * sqrt(3.0) / 2.0;
+            float ax = 0.0,     ay =  h * 2.0 / 3.0;
+            float bx = -s/2.0,  by = -h / 3.0;
+            float cx =  s/2.0,  cy = -h / 3.0;
+
+            uint seeded = 0u;
+            if (pushQ1FromBase(0u % Q1_QUEUE_SHARDS,
+                       floatBitsToUint(ax), floatBitsToUint(ay),
+                       floatBitsToUint(bx), floatBitsToUint(by), 0)) {
+                seeded++;
+            }
+            if (pushQ1FromBase(1u % Q1_QUEUE_SHARDS,
+                       floatBitsToUint(bx), floatBitsToUint(by),
+                       floatBitsToUint(cx), floatBitsToUint(cy), 0)) {
+                seeded++;
+            }
+            if (pushQ1FromBase(2u % Q1_QUEUE_SHARDS,
+                       floatBitsToUint(cx), floatBitsToUint(cy),
+                       floatBitsToUint(ax), floatBitsToUint(ay), 0)) {
+                seeded++;
+            }
+            METRIC_ADD(control.metrics.nodeASeedEdges, seeded);
+        }
+    }
+
+    memoryBarrierBuffer();
+
+    while (control.stopFlag == 0) {
+        if (wgId < NODE_C_START) {
+            // --- NODE B: Subdivider ---
+            uint rawP0;
+            uint rawP1;
+            uint rawP2;
+            uint rawP3;
+            uint depth;
+            if (popQ1(wgId, localId, rawP0, rawP1, rawP2, rawP3, depth)) {
+                float x1 = uintBitsToFloat(rawP0);
+                float y1 = uintBitsToFloat(rawP1);
+                float x2 = uintBitsToFloat(rawP2);
+                float y2 = uintBitsToFloat(rawP3);
+                METRIC_ADD(control.metrics.nodeBTasks, 1u);
+
+                if (depth < MAX_DEPTH) {
+                    METRIC_ADD(control.metrics.nodeBSubdivideTasks, 1u);
+                    float dx = (x2 - x1) / 3.0;
+                    float dy = (y2 - y1) / 3.0;
+                    float kax = x1 + dx;
+                    float kay = y1 + dy;
+                    float kbx = x1 + 2.0 * dx;
+                    float kby = y1 + 2.0 * dy;
+                    float cos60 = 0.5;
+                    float sin60 = 0.8660254037844387;
+                    float kcx = kax + dx * cos60 + dy * sin60;
+                    float kcy = kay - dx * sin60 + dy * cos60;
+
+                    uint nd = depth + 1;
+                    pushQ1(floatBitsToUint(x1),  floatBitsToUint(y1),
+                           floatBitsToUint(kax), floatBitsToUint(kay), nd);
+                    pushQ1(floatBitsToUint(kax), floatBitsToUint(kay),
+                           floatBitsToUint(kcx), floatBitsToUint(kcy), nd);
+                    pushQ1(floatBitsToUint(kcx), floatBitsToUint(kcy),
+                           floatBitsToUint(kbx), floatBitsToUint(kby), nd);
+                    pushQ1(floatBitsToUint(kbx), floatBitsToUint(kby),
+                           floatBitsToUint(x2),  floatBitsToUint(y2),  nd);
+                } else {
+                    METRIC_ADD(control.metrics.nodeBFinalTasks, 1u);
+                    pushQ2(floatBitsToUint(x1), floatBitsToUint(y1),
+                           floatBitsToUint(x2), floatBitsToUint(y2), depth);
+                }
+            }
+        } else {
+            // --- NODE C: Writer ---
+            uint rawP0;
+            uint rawP1;
+            uint rawP2;
+            uint rawP3;
+            if (popQ2(wgId, localId, rawP0, rawP1, rawP2, rawP3)) {
+                float x1 = uintBitsToFloat(rawP0);
+                float y1 = uintBitsToFloat(rawP1);
+                float x2 = uintBitsToFloat(rawP2);
+                float y2 = uintBitsToFloat(rawP3);
+                METRIC_ADD(control.metrics.nodeCOutputEdges, 1u);
+
+                uint base = atomicAdd(control.vertexCount, 2);
+                METRIC_ADD(control.metrics.vertexWriteCalls, 1u);
+                output_vb.vertices[base]     = vec2(x1, y1);
+                output_vb.vertices[base + 1] = vec2(x2, y2);
+                memoryBarrierBuffer();
+
+                uint processed = atomicAdd(control.totalProcessed, 1) + 1;
+                if (processed >= MAX_DEPTH_EDGES) {
+                    atomicExchange(control.stopFlag, 1u);
+                    METRIC_ADD(control.metrics.stopFlagWrites, 1u);
+                }
+            }
+        }
+    }
+}

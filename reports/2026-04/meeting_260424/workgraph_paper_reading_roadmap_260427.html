@@ -1,0 +1,730 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<title>WorkGraph POC ?? Paper High-Level Reading ? Roadmap</title>
+<style>
+  @page { size: A4; margin: 18mm 16mm 18mm 16mm; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    color: #202124;
+    background: #fff;
+    font-family: "Microsoft JhengHei", "Noto Sans CJK TC", "Noto Sans TC", "PingFang TC", "Segoe UI", sans-serif;
+    font-size: 10.6pt;
+    line-height: 1.56;
+  }
+  main { max-width: 780px; margin: 0 auto; }
+  h1, h2, h3 { color: #111827; line-height: 1.25; break-after: avoid; }
+  h1 { font-size: 22pt; margin: 0 0 16px; padding-bottom: 10px; border-bottom: 2px solid #111827; }
+  h2 { font-size: 16pt; margin: 26px 0 10px; padding-bottom: 5px; border-bottom: 1px solid #d8dee4; }
+  h3 { font-size: 12.5pt; margin: 18px 0 8px; }
+  p { margin: 7px 0 10px; }
+  ul, ol { margin: 7px 0 12px 22px; padding: 0; }
+  li { margin: 3px 0; }
+  blockquote { margin: 12px 0; padding: 8px 12px; border-left: 4px solid #6b7280; background: #f6f8fa; color: #30363d; }
+  code {
+    font-family: "Cascadia Mono", "Consolas", "SFMono-Regular", monospace;
+    font-size: 0.9em;
+    background: #f3f4f6;
+    padding: 1px 4px;
+    border-radius: 3px;
+  }
+  pre {
+    margin: 10px 0 14px;
+    padding: 10px 12px;
+    background: #f6f8fa;
+    border: 1px solid #d8dee4;
+    border-radius: 4px;
+    overflow: hidden;
+    white-space: pre-wrap;
+    break-inside: avoid;
+  }
+  pre code { background: transparent; padding: 0; font-size: 9.2pt; }
+  table { width: 100%; border-collapse: collapse; margin: 10px 0 16px; font-size: 9.2pt; break-inside: avoid; }
+  th, td { border: 1px solid #d8dee4; padding: 6px 7px; vertical-align: top; }
+  th { background: #f3f4f6; font-weight: 700; }
+  a { color: #0645ad; text-decoration: none; word-break: break-all; }
+  hr { border: 0; border-top: 1px solid #d8dee4; margin: 20px 0; }
+  h2:nth-of-type(n+2) { break-before: auto; }
+</style>
+</head>
+<body><main><h1>WorkGraph POC 四篇 Paper High-Level Reading 與 Roadmap</h1>
+<p>日期：260427<br>脈絡：Vulkan persistent-thread / software WorkGraph producer-consumer POC</p>
+<h2>0. 為什麼讀這四篇</h2>
+<p>我們現在的 Vulkan POC 已經不只是「一個 compute shader 產生 Koch snowflake」。它其實是一個小型 GPU-side runtime：</p>
+<ul>
+<li>worker 透過一次 compute dispatch 長駐在 GPU 上；</li>
+<li>task 透過 software queue 傳遞；</li>
+<li>queue state、payload visibility、ready flag 依賴 atomic；</li>
+<li>producer / consumer 比例會影響 spin-wait、global memory traffic、cache locality；</li>
+<li>termination detection 也是 scheduling system 的一部分。</li>
+</ul>
+<p>這四篇 paper 可以串成一條技術演化路線：</p>
+<pre><code class="language-text">persistent global queue
+  -&gt; batched / hierarchical queue
+    -&gt; wavefront / staged queues
+      -&gt; continuation / coroutine-style runtime
+</code></pre>
+<p>我們短期仍然應該停在「Vulkan compute 可以手刻」的範圍，但後面兩篇可以幫我們看見更大的架構方向。</p>
+<h2>1. 四條技術路線總覽</h2>
+<table>
+<thead>
+<tr>
+<th>技術路線</th>
+<th>代表 paper</th>
+<th>核心想法</th>
+<th>對我們 POC 的意義</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Persistent threads + software queues</td>
+<td>Cederman and Tsigas 2008</td>
+<td>GPU worker 長駐，透過 shared queue 動態取 task</td>
+<td>這就是目前 baseline。先量出 global queue + atomics 到底在哪裡爆。</td>
+</tr>
+<tr>
+<td>Specialized / batched concurrent queues</td>
+<td>Troendle, Ta, and Jang 2019</td>
+<td>用 group-level proxy / batch queue operation 降低 contention 和 retry</td>
+<td>下一個最實際的優化方向：把 per-task atomic 改成 group-level reservation。</td>
+</tr>
+<tr>
+<td>Wavefront / staged execution</td>
+<td>Laine, Karras, and Aila 2013</td>
+<td>不把所有邏輯塞在一個 megakernel，而是拆成 coherent stages</td>
+<td>用來比較：single persistent shader 是否應該拆成 stage-aware queues 或多個 stage。</td>
+</tr>
+<tr>
+<td>GPU coroutines / continuation runtime</td>
+<td>Zheng et al. 2024</td>
+<td>用 coroutine/state frame/continuation 把手動拆 stage 的工作自動化</td>
+<td>長期架構參考：task payload 可以變成 continuation token + state frame。</td>
+</tr>
+</tbody></table>
+<h2>2. Paper 1: On Dynamic Load Balancing on Graphics Processors</h2>
+<p>來源：Daniel Cederman and Philippas Tsigas, &quot;On Dynamic Load Balancing on Graphics Processors&quot;, Graphics Hardware 2008.<br>連結：<a href="https://diglib.eg.org/items/80970ff5-d565-4a2e-88cc-cc9701e4ad9e">https://diglib.eg.org/items/80970ff5-d565-4a2e-88cc-cc9701e4ad9e</a></p>
+<h3>這篇在解什麼問題</h3>
+<p>這篇問的是一個很根本的問題：</p>
+<blockquote>
+<p>如果 GPU workload 是動態的、每個 task 的成本事先不知道，那能不能像 CPU 一樣做 dynamic load balancing？</p>
+</blockquote>
+<p>答案是可以，但 synchronization 非常貴。</p>
+<p>它比較了多種 GPU dynamic load balancing 方法，包含 lock-based 和 lock-free 設計，並用 octree construction 這類不規則 workload 做實驗。對我們來說，重點不是照抄 2008 年的演算法，而是它很早就指出：</p>
+<ul>
+<li>dynamic GPU work 需要 scheduling；</li>
+<li>queue / shared state 會成為核心成本；</li>
+<li>lock-free 比 blocking 更適合 GPU，但 lock-free 不等於便宜；</li>
+<li>synchronization 必須被當成一個要量測的主角。</li>
+</ul>
+<h3>對我們的啟發</h3>
+<p>這篇基本上就是 persistent-thread scheduling 的歷史 baseline：</p>
+<pre><code class="language-text">CPU dispatch 一批 persistent workers
+workers 在 GPU 上一直拿 task
+task 可以產生 child task
+shared queue / counter 透過 atomic 同步
+</code></pre>
+<p>這和我們目前 POC 很像：</p>
+<ul>
+<li>workgroups 是 persistent workers；</li>
+<li><code>q1</code> / <code>q2</code> 是 software queues；</li>
+<li><code>Task.payload[5]</code> 是 ready flag；</li>
+<li>queue count / head / tail 透過 atomic 管；</li>
+<li>NodeB / NodeC 角色目前由 workgroup 分配。</li>
+</ul>
+<p>所以這篇 paper 對我們的定位是：</p>
+<blockquote>
+<p>目前版本不是錯，它是必要 baseline；但它會暴露出 global queue + atomic scheduling 的天然瓶頸。</p>
+</blockquote>
+<h3>我們應該量什麼</h3>
+<p>從這篇出發，baseline 不應該只量 FPS。至少要補：</p>
+<ul>
+<li>q1 / q2 enqueue count；</li>
+<li>q1 / q2 dequeue count；</li>
+<li>CAS success / failure；</li>
+<li>full-queue retry；</li>
+<li>empty-queue retry；</li>
+<li>ready-flag spin 次數；</li>
+<li>NodeB / NodeC 每個 workgroup 處理的 task 數；</li>
+<li>stop flag / termination 觸發時機。</li>
+</ul>
+<h3>可能會看到的問題</h3>
+<p>預期 baseline 會在這些地方卡住：</p>
+<ul>
+<li>很多 lanes 同時做 per-task atomic；</li>
+<li>producer 比 consumer 快，queue 壓力升高；</li>
+<li>consumer 預約到 slot 但 payload 還沒 ready，只能 spin；</li>
+<li>payload 都經過 global memory，locality 差；</li>
+<li>queue empty 不代表整個 graph 真的完成，termination detection 變複雜。</li>
+</ul>
+<p>這些不是失敗，而是我們後續設計的理由。</p>
+<h2>3. Paper 2: A Specialized Concurrent Queue for Scheduling Irregular Workloads on GPUs</h2>
+<p>來源：David Troendle, Tuan Ta, and Byunghyun Jang, &quot;A Specialized Concurrent Queue for Scheduling Irregular Workloads on GPUs&quot;, ICPP 2019.<br>連結：<a href="https://par.nsf.gov/servlets/purl/10188451">https://par.nsf.gov/servlets/purl/10188451</a></p>
+<h3>這篇在解什麼問題</h3>
+<p>這篇直接瞄準 persistent-thread scheduler 的痛點：</p>
+<blockquote>
+<p>active threads 越多，shared queue 上的 contention 和 retry 越嚴重。</p>
+</blockquote>
+<p>它提出一個 GPU 專用的 non-blocking concurrent queue。對我們最重要的是兩個概念：</p>
+<ol>
+<li>queue operation 不會因為 CAS 失敗而反覆 retry；</li>
+<li>一次 queue operation 可以處理多筆 entries，成本接近處理一筆；</li>
+<li>每個 thread group 用一個 proxy thread 代表整個 group 執行 atomic operation。</li>
+</ol>
+<p>這等於把問題從：</p>
+<pre><code class="language-text">每個 lane / 每個 task 都去搶 global queue atomic
+</code></pre>
+<p>改成：</p>
+<pre><code class="language-text">一個 proxy lane / workgroup 先保留一批 slots
+group 內部用 local offset 分配
+payload 連續寫入
+</code></pre>
+<h3>對我們的啟發</h3>
+<p>我們現在的 enqueue 大概是：</p>
+<pre><code class="language-text">每產生一個 task:
+  CAS / atomic 更新 queue count
+  atomic tail reserve slot
+  write payload
+  atomic publish ready flag
+</code></pre>
+<p>這很容易讓 atomic 次數和 task 數量成正比。</p>
+<p>這篇 paper 告訴我們：GPU scheduler 的 queue 不該讓每個 lane 都直接碰 global queue metadata。應該把 atomic 粒度提高到 group level。</p>
+<h3>可以手刻的 POC variant</h3>
+<p>第一個可以做的是 batch enqueue：</p>
+<pre><code class="language-text">NodeB workgroup:
+  先計算這個 workgroup 產生多少 child tasks
+  proxy lane atomic reserve N 個 queue slots
+  lanes 根據 local offset 寫 payload
+  最後 publish 這批 tasks
+</code></pre>
+<p>第二個可以做的是 NodeC output batch allocation：</p>
+<pre><code class="language-text">Before:
+  每個 leaf edge atomicAdd vertexCount, 2
+
+After:
+  每個 workgroup 先統計 leafCount
+  atomicAdd vertexCount, 2 * leafCount
+  group 內部用 local offset 寫 vertex buffer
+</code></pre>
+<p>第三個可以做的是 local queue + global spill：</p>
+<pre><code class="language-text">workgroup LDS queue:
+  先在 local queue 裡傳 task
+  local queue 滿了才 spill 到 global queue
+</code></pre>
+<h3>我們應該量什麼</h3>
+<ul>
+<li>每個 output edge 平均幾次 atomic；</li>
+<li>CAS failure 是否下降；</li>
+<li>q1 / q2 full retry 是否下降；</li>
+<li>batch size 對 frame time 的影響；</li>
+<li>batch 後 payload write 是否更連續；</li>
+<li>proxy lane 是否造成 group 內部 idle。</li>
+</ul>
+<h3>這條路的價值</h3>
+<p>這是短期最值得做的優化路線。原因很樸素：</p>
+<ul>
+<li>仍然是 Vulkan compute 可手刻；</li>
+<li>不需要改整個架構；</li>
+<li>可以直接對應現在最可疑的 atomic contention；</li>
+<li>結果容易量化。</li>
+</ul>
+<p>但它不一定解決 payload locality。queue atomic 變少，不代表 payload 不走 global memory。這就是為什麼後面還需要 hierarchical queue 或 staged execution。</p>
+<h2>4. Paper 3: Megakernels Considered Harmful</h2>
+<p>來源：Samuli Laine, Tero Karras, and Timo Aila, &quot;Megakernels Considered Harmful: Wavefront Path Tracing on GPUs&quot;, High-Performance Graphics 2013.<br>連結：<a href="https://research.nvidia.com/publication/2013-07_megakernels-considered-harmful-wavefront-path-tracing-gpus">https://research.nvidia.com/publication/2013-07_megakernels-considered-harmful-wavefront-path-tracing-gpus</a></p>
+<h3>這篇在解什麼問題</h3>
+<p>這篇來自 rendering / path tracing 領域。它的觀點是：</p>
+<blockquote>
+<p>把整個複雜 renderer 塞進一個巨大 GPU kernel，通常不是好主意。</p>
+</blockquote>
+<p>原因包括：</p>
+<ul>
+<li>control flow divergence 嚴重；</li>
+<li>某些 lanes 被 mask 掉，SIMT utilization 差；</li>
+<li>register usage 太高，occupancy 降低；</li>
+<li>instruction cache 壓力高；</li>
+<li>不同 material / ray state 混在一起，coherence 差。</li>
+</ul>
+<p>所以它主張 wavefront path tracing：把大 kernel 拆成多個比較單純的 stage，用 queue 串起來。</p>
+<p>例如不要這樣：</p>
+<pre><code class="language-text">one megakernel:
+  ray generation
+  intersection
+  material evaluation
+  shadow ray
+  next bounce
+  output
+</code></pre>
+<p>而是這樣：</p>
+<pre><code class="language-text">ray queue
+intersection queue
+material queue
+shadow queue
+next-bounce queue
+output queue
+</code></pre>
+<p>它的 tradeoff 是：</p>
+<pre><code class="language-text">多一些 queue traffic / stage transition
+換取更好的 coherence、較低 register pressure、較高 occupancy
+</code></pre>
+<h3>對我們的啟發</h3>
+<p>我們現在的 shader 還不算真正的 megakernel，但已經有小型 megakernel 的形狀：</p>
+<pre><code class="language-text">NodeA seed logic
+NodeB subdivision logic
+NodeC output logic
+queue logic
+termination logic
+</code></pre>
+<p>如果未來 Node 變多、payload 變複雜、branch 變多，單一 persistent shader 可能會遇到：</p>
+<ul>
+<li>NodeB / NodeC 行為差異太大；</li>
+<li>register pressure 被最重的 node 拉高；</li>
+<li>角色分配固定，某些 workgroup 空等；</li>
+<li>branch divergence 變重。</li>
+</ul>
+<p>Wavefront 思路提供另一種架構對照：</p>
+<blockquote>
+<p>不一定要讓一個 persistent shader 內部處理所有 node；也可以把 node/stage 拆開，讓每一段更 coherent。</p>
+</blockquote>
+<h3>可以手刻的 POC variant</h3>
+<p>我們可以設計幾個架構對照：</p>
+<pre><code class="language-text">Variant A: current single persistent shader
+  NodeA / NodeB / NodeC 都在同一個 shader
+
+Variant B: stage-aware persistent shader
+  仍然一次 dispatch，但 worker 根據 queue pressure 選 NodeB 或 NodeC
+
+Variant C: split compute shaders
+  NodeB 和 NodeC 拆成不同 shader / pass
+
+Variant D: staged queues + batch reservation
+  stage queue 仍存在，但 queue operation 採用 batch reservation
+</code></pre>
+<h3>我們應該量什麼</h3>
+<ul>
+<li>shader register count；</li>
+<li>occupancy；</li>
+<li>NodeB / NodeC branch divergence；</li>
+<li>每個 stage 的 GPU time；</li>
+<li>stage queue traffic；</li>
+<li>split shader 是否減少 spin-wait；</li>
+<li>split shader 是否增加 global memory traffic。</li>
+</ul>
+<h3>這條路的價值與風險</h3>
+<p>價值：</p>
+<ul>
+<li>可以測 single persistent shader 是否真的適合 WorkGraph-like workload；</li>
+<li>可以讓 NodeB / NodeC 分別 tuning；</li>
+<li>可能降低 register pressure 和 divergence。</li>
+</ul>
+<p>風險：</p>
+<ul>
+<li>多 stage 可能增加 queue traffic；</li>
+<li>如果用 CPU multi-dispatch，會偏離 GPU self-scheduling；</li>
+<li>如果 payload locality 是主因，staging 反而可能更慢。</li>
+</ul>
+<p>所以這條路不是「一定會快」，而是必要的 architecture comparison。</p>
+<h2>5. Paper 4: GPU Coroutines for Flexible Splitting and Scheduling of Rendering Tasks</h2>
+<p>來源：Shaokun Zheng, Xin Chen, Zhong Shi, Ling-Qi Yan, and Kun Xu, &quot;GPU Coroutines for Flexible Splitting and Scheduling of Rendering Tasks&quot;, ACM Transactions on Graphics 43(6), Article 281, 2024.<br>連結：<a href="https://cg.cs.tsinghua.edu.cn/people/~kun/2024/GPUCoroutines.pdf">https://cg.cs.tsinghua.edu.cn/people/~kun/2024/GPUCoroutines.pdf</a></p>
+<h3>這篇在解什麼問題</h3>
+<p>這篇可以看成 wavefront 的更高層版本。</p>
+<p>Wavefront 很有用，但手動拆 stage 很痛苦：</p>
+<ul>
+<li>programmer 要決定在哪裡 split；</li>
+<li>每個 stage 要保存哪些 state 很難管理；</li>
+<li>nested control flow 很難拆；</li>
+<li>queue / continuation / state frame 都要手寫；</li>
+<li>scheduler 和 payload layout 會綁死在 application 上。</li>
+</ul>
+<p>GPU coroutine 的想法是：</p>
+<pre><code class="language-text">programmer 用接近 megakernel 的方式寫程式
+在需要切開的地方標記 suspend point
+compiler/runtime 自動抽出 subroutine
+runtime materialize coroutine state frame
+scheduler 負責恢復 continuation
+</code></pre>
+<p>概念上：</p>
+<pre><code class="language-text">megakernel-like code + suspend marks
+  -&gt; compiler extracts continuation subroutines
+  -&gt; runtime stores coroutine state frames
+  -&gt; scheduler resumes the right subroutine later
+</code></pre>
+<h3>對我們的啟發</h3>
+<p>我們短期不應該真的做一個 GPU coroutine compiler。那太大。</p>
+<p>但這篇提供一個很好的抽象：</p>
+<pre><code class="language-text">task = continuation token + state frame
+node execution = resume from a suspension point
+scheduler = 決定下一個 resume 哪個 continuation
+payload = continuation 需要保存的 live state
+</code></pre>
+<p>這和 Work Graph 的精神很接近。</p>
+<h3>可以轉成我們的手刻方向</h3>
+<p>目前 task 是：</p>
+<pre><code class="language-cpp">struct Task {
+    uint payload[6];
+};
+</code></pre>
+<p>未來可以變成 continuation-style task：</p>
+<pre><code class="language-cpp">struct Task {
+    uint nodeId;        // resume at NodeB / NodeC / future node
+    uint stateOffset;   // offset into state-frame buffer
+    uint depth;
+    uint flags;
+};
+</code></pre>
+<p>shader 內部變成：</p>
+<pre><code class="language-glsl">switch (task.nodeId) {
+case NODE_B:
+    run_subdivide(task);
+    enqueue_continuation(NODE_B or NODE_C, newState);
+    break;
+
+case NODE_C:
+    run_output(task);
+    break;
+}
+</code></pre>
+<p>這樣 queue entry 不一定要攜帶完整 payload，而是可以只帶：</p>
+<pre><code class="language-text">nodeId + stateOffset + scheduling metadata
+</code></pre>
+<p>payload / state frame 放在另一個 buffer。</p>
+<h3>我們應該量什麼</h3>
+<ul>
+<li>queue entry size 是否下降；</li>
+<li>payload bytes per generated task 是否下降；</li>
+<li>state-frame indirection 是否增加 memory latency；</li>
+<li>continuation-style task 是否讓 irregular graph 更容易表達；</li>
+<li>scheduler 是否更容易做 dynamic role / stage selection。</li>
+</ul>
+<h3>這條路的價值與風險</h3>
+<p>價值：</p>
+<ul>
+<li>更接近 Work Graph / runtime abstraction；</li>
+<li>node 增加時不需要重寫所有 queue layout；</li>
+<li>payload 可以壓縮成 state pointer / token；</li>
+<li>方便探索 dispatcher / locator。</li>
+</ul>
+<p>風險：</p>
+<ul>
+<li>state-frame lifetime 管理變難；</li>
+<li>多一層 indirection；</li>
+<li>debug 難度增加；</li>
+<li>termination detection 更複雜。</li>
+</ul>
+<p>所以這是中長期架構，不是第一個 optimization。</p>
+<h2>6. 四篇 Paper 的共同結論</h2>
+<h3>6.1 先讓 dynamic work 跑起來</h3>
+<p>Paper 1 告訴我們：persistent workers + software queues 可以處理 dynamic workload，但 synchronization 是核心成本。</p>
+<p>對應行動：</p>
+<ul>
+<li>保留目前 POC 當 baseline；</li>
+<li>把 queue / atomic / spin / termination 量出來。</li>
+</ul>
+<h3>6.2 再讓 queue operation scale</h3>
+<p>Paper 2 告訴我們：per-lane / per-task atomic 不會 scale。queue 要為 GPU SIMT 執行模型特化。</p>
+<p>對應行動：</p>
+<ul>
+<li>batch reservation；</li>
+<li>proxy lane / proxy workgroup；</li>
+<li>group-level output allocation；</li>
+<li>LDS local queue + global spill。</li>
+</ul>
+<h3>6.3 再考慮 execution coherence</h3>
+<p>Paper 3 告訴我們：如果一個 shader 裡有太多不同 stage，可能應該拆開。</p>
+<p>對應行動：</p>
+<ul>
+<li>比較 single persistent shader 和 stage-aware queues；</li>
+<li>測 split NodeB / NodeC 是否降低 register pressure 或 divergence；</li>
+<li>評估 queue traffic 是否抵消好處。</li>
+</ul>
+<h3>6.4 最後走向 continuation/runtime abstraction</h3>
+<p>Paper 4 告訴我們：長期不應該永遠手寫 queue protocol 和 state passing。</p>
+<p>對應行動：</p>
+<ul>
+<li>把 task 視為 continuation token；</li>
+<li>把 payload 視為 state frame；</li>
+<li>讓 dispatcher / locator 變成可替換 scheduler policy。</li>
+</ul>
+<h2>7. 建議 Roadmap</h2>
+<h3>Phase 0: Freeze Koch Baseline</h3>
+<p>目的：建立穩定對照組。</p>
+<p>工作：</p>
+<ul>
+<li>固定 <code>MAX_DEPTH</code>、<code>QUEUE_SIZE</code>、<code>NODE_C_START</code>；</li>
+<li>確認 vertex count / output correctness；</li>
+<li>記錄目前 compute time / frame path；</li>
+<li>保存一份 baseline config。</li>
+</ul>
+<p>產出：</p>
+<ul>
+<li>baseline 設定表；</li>
+<li>baseline metric table；</li>
+<li>correctness 截圖或驗證紀錄。</li>
+</ul>
+<h3>Phase 1: Runtime Metrics</h3>
+<p>目的：讓 scheduler 成本可見。</p>
+<p>加入：</p>
+<ul>
+<li>GPU timestamp：reset / compute / barrier / render；</li>
+<li>q1 / q2 enqueue count；</li>
+<li>q1 / q2 dequeue count；</li>
+<li>CAS success / failure；</li>
+<li>full queue retry；</li>
+<li>empty queue retry；</li>
+<li>ready flag spin count；</li>
+<li>max queue occupancy；</li>
+<li>NodeB / NodeC processed task count；</li>
+<li>output allocation count；</li>
+<li>termination trigger timing。</li>
+</ul>
+<p>產出：</p>
+<ul>
+<li>每次 run 的 CSV / console table；</li>
+<li>profiler capture；</li>
+<li>bottleneck note。</li>
+</ul>
+<h3>Phase 2: Queue Optimization Variants</h3>
+<p>目的：直接驗證 Paper 2。</p>
+<p>Variants：</p>
+<ol>
+<li>current global queue baseline；</li>
+<li>batch enqueue for q1 / q2；</li>
+<li>group-level output allocation；</li>
+<li>batch dequeue where practical；</li>
+<li>local LDS queue + global spill。</li>
+</ol>
+<p>要回答：</p>
+<ul>
+<li>atomic count 是否下降？</li>
+<li>CAS failure 是否下降？</li>
+<li>queue occupancy 是否更平滑？</li>
+<li>bottleneck 是 atomic 還是 payload traffic？</li>
+</ul>
+<h3>Phase 3: Workload Expansion</h3>
+<p>目的：避免只對 Koch 最佳化。</p>
+<p>Workloads：</p>
+<ol>
+<li>Koch baseline：規則、固定 expansion；</li>
+<li>irregular expansion：每個 task 產生 0 / 1 / 2 / 4 / N 個 child；</li>
+<li>producer-heavy imbalance：NodeB 產生 work 比 NodeC 快；</li>
+<li>consumer-heavy imbalance：NodeC 經常等 NodeB；</li>
+<li>output-heavy leaf workload：特別壓 vertex allocation / memory write。</li>
+</ol>
+<p>要回答：</p>
+<ul>
+<li>optimization 是否只對規則 workload 有效？</li>
+<li>queue pressure burst 時會發生什麼？</li>
+<li>NodeB / NodeC 是否需要 dynamic role switching？</li>
+<li>output write 是否是 hidden bottleneck？</li>
+</ul>
+<h3>Phase 4: Stage-Aware / Wavefront Architecture</h3>
+<p>目的：驗證 Paper 3 的架構替代路線。</p>
+<p>Variants：</p>
+<ol>
+<li>current single persistent shader；</li>
+<li>stage-aware persistent shader；</li>
+<li>split NodeB / NodeC compute shaders；</li>
+<li>staged queues + batch reservation。</li>
+</ol>
+<p>要回答：</p>
+<ul>
+<li>拆 stage 是否降低 register pressure？</li>
+<li>occupancy 是否提高？</li>
+<li>stage queue traffic 是否變成新瓶頸？</li>
+<li>WorkGraph-like workload 更適合 persistent runtime 還是 wavefront runtime？</li>
+</ul>
+<h3>Phase 5: Continuation-Style Runtime</h3>
+<p>目的：借用 Paper 4 的 coroutine 模型，但不做完整 compiler。</p>
+<p>設計：</p>
+<ul>
+<li>queue entry 包含 <code>nodeId</code>、<code>stateOffset</code>、scheduling metadata；</li>
+<li>payload / state frame 放到獨立 buffer；</li>
+<li>NodeB / NodeC 成為 resume point；</li>
+<li>dispatcher 決定下一個 resume 哪個 continuation。</li>
+</ul>
+<p>要回答：</p>
+<ul>
+<li>token-based queue 是否減少 payload traffic？</li>
+<li>state-frame indirection 是否太貴？</li>
+<li>continuation model 是否讓 irregular graph 更容易擴展？</li>
+<li>這是否能成為 Vulkan software WorkGraph 和 native WorkGraph 之間的概念橋樑？</li>
+</ul>
+<h2>8. 實驗 Backlog：從 Paper 轉成可執行 Variant</h2>
+<p>這裡的原則是：</p>
+<blockquote>
+<p>每個 variant 只驗證一個假設。</p>
+</blockquote>
+<p>不要一次把 queue batching、LDS local queue、dynamic role switching、continuation token 全部混在一起。那樣就算效能變好，也很難說清楚到底是哪個設計有效。</p>
+<table>
+<thead>
+<tr>
+<th>優先級</th>
+<th>Variant</th>
+<th>來源 paper</th>
+<th>要驗證的假設</th>
+<th>主要 metrics</th>
+<th>預期產出</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>P0</td>
+<td>Current Koch baseline + metrics</td>
+<td>Paper 1</td>
+<td>現在的 global queue runtime 成本可被拆解</td>
+<td>GPU timestamp、CAS failure、spin count、queue occupancy</td>
+<td>baseline table</td>
+</tr>
+<tr>
+<td>P1</td>
+<td>Group-level output allocation</td>
+<td>Paper 2</td>
+<td>NodeC output 不應該每個 leaf 都做 global atomic</td>
+<td>output atomic count、vertex write time、NodeC time</td>
+<td>output bottleneck report</td>
+</tr>
+<tr>
+<td>P1</td>
+<td>Batch enqueue for q1 / q2</td>
+<td>Paper 2</td>
+<td>per-task enqueue atomic 是主要 contention 來源之一</td>
+<td>enqueue atomic count、CAS failure、queue retry</td>
+<td>batching comparison</td>
+</tr>
+<tr>
+<td>P2</td>
+<td>Irregular expansion workload</td>
+<td>Paper 1 + Paper 2</td>
+<td>Koch 太規則，無法代表 bursty dynamic workload</td>
+<td>max queue occupancy、full retry、role idle time</td>
+<td>workload stress report</td>
+</tr>
+<tr>
+<td>P2</td>
+<td>Producer/consumer imbalance workload</td>
+<td>Paper 1 + Paper 3</td>
+<td>固定 NodeB / NodeC 比例可能無法處理 queue pressure</td>
+<td>q1/q2 occupancy、NodeB/NodeC processed count、idle/spin</td>
+<td>role allocation note</td>
+</tr>
+<tr>
+<td>P3</td>
+<td>Stage-aware persistent shader</td>
+<td>Paper 3</td>
+<td>worker 應該根據 queue pressure 選 stage，而不是固定角色</td>
+<td>processed count per role、empty retry、compute time</td>
+<td>stage-aware comparison</td>
+</tr>
+<tr>
+<td>P3</td>
+<td>Split NodeB / NodeC compute shaders</td>
+<td>Paper 3</td>
+<td>拆 stage 可能降低 register pressure / divergence</td>
+<td>occupancy、register count、stage time、queue traffic</td>
+<td>wavefront architecture comparison</td>
+</tr>
+<tr>
+<td>P4</td>
+<td>LDS local queue + global spill</td>
+<td>Paper 2</td>
+<td>producer-consumer locality 可以減少 global queue traffic</td>
+<td>global enqueue count、spill count、payload bytes</td>
+<td>locality experiment</td>
+</tr>
+<tr>
+<td>P4</td>
+<td>Continuation-style task format</td>
+<td>Paper 4</td>
+<td>queue entry 可以從 full payload 變成 nodeId + stateOffset</td>
+<td>queue entry bytes、state-frame load cost、extensibility</td>
+<td>continuation design note</td>
+</tr>
+</tbody></table>
+<h3>建議第一輪實作順序</h3>
+<p>第一輪不要碰太大架構，先做能快速驗證的三件事：</p>
+<ol>
+<li><code>baseline + metrics</code>：先讓問題可見。</li>
+<li><code>group-level output allocation</code>：範圍最窄，最容易驗證是否有改善。</li>
+<li><code>batch enqueue for q1/q2</code>：直接測 paper 2 的主要假設。</li>
+</ol>
+<p>第一輪完成後，才進入 workload expansion：</p>
+<pre><code class="language-text">Koch baseline
+  -&gt; irregular expansion
+  -&gt; producer-heavy imbalance
+  -&gt; consumer-heavy imbalance
+  -&gt; output-heavy leaf workload
+</code></pre>
+<p>這樣可以避免只把系統調到「剛好適合 Koch」。</p>
+<h3>Variant 評估格式</h3>
+<p>每個 variant 建議都用同一個小表：</p>
+<table>
+<thead>
+<tr>
+<th>欄位</th>
+<th>說明</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Hypothesis</td>
+<td>這次只驗證哪一個假設</td>
+</tr>
+<tr>
+<td>Code change</td>
+<td>改了哪個 shader / C++ path</td>
+</tr>
+<tr>
+<td>Correctness</td>
+<td>vertex count / output 是否仍正確</td>
+</tr>
+<tr>
+<td>Metrics delta</td>
+<td>相對 baseline 的 timestamp / atomic / retry / occupancy 變化</td>
+</tr>
+<tr>
+<td>Interpretation</td>
+<td>這個結果支持或否定哪個 scheduler 設計</td>
+</tr>
+<tr>
+<td>Next variant</td>
+<td>下一步應該接哪個實驗</td>
+</tr>
+</tbody></table>
+<p>這個格式會讓每次優化都能回到研究問題，而不是變成單純 trial-and-error。</p>
+<h2>9. 建議研究 framing</h2>
+<p>可以把研究題目暫時寫成：</p>
+<blockquote>
+<p>We study hand-crafted GPU-side scheduling techniques for approximating Work Graph-style execution in Vulkan, moving from persistent global queues toward batched, hierarchical, staged, and continuation-based runtimes.</p>
+</blockquote>
+<p>中文說法：</p>
+<blockquote>
+<p>我們研究如何在 Vulkan 上用手刻 GPU-side scheduler 逼近 Work Graph-style execution；路線從 persistent global queue 出發，逐步探索 batched queue、hierarchical queue、wavefront staging，以及 continuation-style runtime。</p>
+</blockquote>
+<p>這個 framing 的好處是：</p>
+<ul>
+<li>不是只說「我們做了一個比較快的 shader」；</li>
+<li>而是說明 software WorkGraph runtime 的成本組成；</li>
+<li>再說哪些手刻技術可以降低哪些成本；</li>
+<li>最後指出哪些剩餘成本需要 native WorkGraph / runtime / API support。</li>
+</ul>
+<h2>10. 立即下一步</h2>
+<p>建議順序：</p>
+<ol>
+<li>對目前 Koch baseline 加 metrics。</li>
+<li>實作 group-level output allocation，因為範圍窄、最容易驗證。</li>
+<li>實作 q1 / q2 batch enqueue。</li>
+<li>加 irregular expansion workload。</li>
+<li>比較 fixed NodeB/NodeC role 和 simple dynamic role switching。</li>
+<li>再考慮 LDS local queue 或 continuation-style task。</li>
+</ol>
+<p>原則：</p>
+<blockquote>
+<p>一次只驗證一個 hypothesis。</p>
+</blockquote>
+<p>不要第一輪就把 batching、local queue、dynamic role switching、continuation payload 全部混在一起。那樣就算跑快了，也很難解釋為什麼。</p>
+<h2>11. References</h2>
+<ul>
+<li>Daniel Cederman and Philippas Tsigas. &quot;On Dynamic Load Balancing on Graphics Processors.&quot; Graphics Hardware 2008. <a href="https://diglib.eg.org/items/80970ff5-d565-4a2e-88cc-cc9701e4ad9e">https://diglib.eg.org/items/80970ff5-d565-4a2e-88cc-cc9701e4ad9e</a></li>
+<li>David Troendle, Tuan Ta, and Byunghyun Jang. &quot;A Specialized Concurrent Queue for Scheduling Irregular Workloads on GPUs.&quot; ICPP 2019. <a href="https://par.nsf.gov/servlets/purl/10188451">https://par.nsf.gov/servlets/purl/10188451</a></li>
+<li>Samuli Laine, Tero Karras, and Timo Aila. &quot;Megakernels Considered Harmful: Wavefront Path Tracing on GPUs.&quot; High-Performance Graphics 2013. <a href="https://research.nvidia.com/publication/2013-07_megakernels-considered-harmful-wavefront-path-tracing-gpus">https://research.nvidia.com/publication/2013-07_megakernels-considered-harmful-wavefront-path-tracing-gpus</a></li>
+<li>Shaokun Zheng, Xin Chen, Zhong Shi, Ling-Qi Yan, and Kun Xu. &quot;GPU Coroutines for Flexible Splitting and Scheduling of Rendering Tasks.&quot; ACM Transactions on Graphics 43(6), Article 281, 2024. <a href="https://cg.cs.tsinghua.edu.cn/people/~kun/2024/GPUCoroutines.pdf">https://cg.cs.tsinghua.edu.cn/people/~kun/2024/GPUCoroutines.pdf</a></li>
+</ul>
+</main></body>
+</html>

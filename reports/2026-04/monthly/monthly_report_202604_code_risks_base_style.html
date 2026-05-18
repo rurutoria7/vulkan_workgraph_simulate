@@ -1,0 +1,1563 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Monthly Report 2026-04 - Vulkan Persistent Thread POC</title>
+  <style>
+    :root {
+      --bg: #0f172a;
+      --bg-deep: #020617;
+      --panel: #1e293b;
+      --panel-soft: rgba(30, 41, 59, 0.78);
+      --panel-dark: rgba(15, 23, 42, 0.9);
+      --line: rgba(148, 163, 184, 0.22);
+      --text: #e2e8f0;
+      --muted: #94a3b8;
+      --faint: #64748b;
+      --accent: #06b6d4;
+      --accent-soft: rgba(6, 182, 212, 0.18);
+      --risk: #f59e0b;
+      --risk-soft: rgba(245, 158, 11, 0.16);
+      --fix: #10b981;
+      --fix-soft: rgba(16, 185, 129, 0.16);
+      --danger: #fb7185;
+      --code: #07111f;
+      --deck-scale: 1;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      background: var(--bg-deep);
+      scroll-behavior: smooth;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--text);
+      font-family: "Aptos Display", "Bahnschrift", "Trebuchet MS", sans-serif;
+      background:
+        radial-gradient(circle at 12% 10%, rgba(6, 182, 212, 0.20), transparent 32rem),
+        radial-gradient(circle at 84% 16%, rgba(16, 185, 129, 0.12), transparent 28rem),
+        linear-gradient(135deg, #020617 0%, #0f172a 56%, #08111f 100%);
+    }
+
+    .deck {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 34px;
+      padding: 34px 0 64px;
+    }
+
+    .slide-shell {
+      width: min(1600px, calc(100vw - 48px));
+      aspect-ratio: 16 / 9;
+      position: relative;
+      overflow: hidden;
+      border-radius: 22px;
+      background: var(--bg);
+      box-shadow: 0 28px 90px rgba(0, 0, 0, 0.46), 0 0 0 1px rgba(148, 163, 184, 0.18);
+    }
+
+    .slide {
+      position: absolute;
+      inset: 0 auto auto 0;
+      width: 1600px;
+      height: 900px;
+      overflow: hidden;
+      transform: scale(var(--deck-scale));
+      transform-origin: top left;
+      background:
+        radial-gradient(circle at 12% 16%, rgba(6, 182, 212, 0.18), transparent 420px),
+        radial-gradient(circle at 92% 18%, rgba(16, 185, 129, 0.10), transparent 380px),
+        radial-gradient(circle at 78% 92%, rgba(245, 158, 11, 0.10), transparent 420px),
+        linear-gradient(135deg, #020617 0%, #0f172a 54%, #111827 100%);
+      isolation: isolate;
+    }
+
+    .slide::before {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background-image:
+        linear-gradient(rgba(148, 163, 184, 0.055) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(148, 163, 184, 0.055) 1px, transparent 1px);
+      background-size: 64px 64px;
+      mask-image: linear-gradient(90deg, rgba(0, 0, 0, 0.65), transparent 72%);
+      pointer-events: none;
+      z-index: -2;
+    }
+
+    .slide::after {
+      content: "";
+      position: absolute;
+      right: -240px;
+      top: -160px;
+      width: 620px;
+      height: 620px;
+      border-radius: 50%;
+      border: 1px solid rgba(6, 182, 212, 0.17);
+      box-shadow: inset 0 0 90px rgba(6, 182, 212, 0.06);
+      pointer-events: none;
+      z-index: -1;
+    }
+
+    h1,
+    h2,
+    h3,
+    p,
+    pre {
+      margin: 0;
+    }
+
+    .slide-title {
+      position: absolute;
+      left: 96px;
+      top: 48px;
+      width: 1408px;
+      font-size: 58px;
+      line-height: 1.04;
+      letter-spacing: -0.035em;
+      color: var(--text);
+    }
+
+    .slide-title::after {
+      content: "";
+      display: block;
+      width: 190px;
+      height: 5px;
+      margin-top: 22px;
+      border-radius: 99px;
+      background: linear-gradient(90deg, var(--accent), transparent);
+    }
+
+    .section-label {
+      font-size: 23px;
+      line-height: 1;
+      letter-spacing: 0.11em;
+      text-transform: uppercase;
+      color: var(--accent);
+    }
+
+    .page {
+      position: absolute;
+      right: 96px;
+      bottom: 58px;
+      min-width: 132px;
+      padding: 9px 18px;
+      border: 1px solid rgba(6, 182, 212, 0.22);
+      border-radius: 999px;
+      background: rgba(2, 6, 23, 0.62);
+      color: var(--muted);
+      font-size: 24px;
+      text-align: center;
+      letter-spacing: 0.04em;
+    }
+
+    .card {
+      position: absolute;
+      padding: 30px 34px;
+      border: 1px solid var(--line);
+      border-radius: 28px;
+      background: linear-gradient(145deg, rgba(30, 41, 59, 0.86), rgba(15, 23, 42, 0.88));
+      box-shadow: 0 22px 48px rgba(0, 0, 0, 0.24);
+    }
+
+    .card h3 {
+      margin-bottom: 16px;
+      color: var(--accent);
+      font-size: 30px;
+      letter-spacing: -0.015em;
+    }
+
+    .card p,
+    .card li {
+      color: var(--text);
+      font-size: 27px;
+      line-height: 1.32;
+    }
+
+    .card .muted {
+      color: var(--muted);
+    }
+
+    .em {
+      color: var(--accent);
+      font-weight: 700;
+    }
+
+    .risk {
+      color: var(--risk);
+    }
+
+    .fix {
+      color: var(--fix);
+    }
+
+    .small {
+      font-size: 22px;
+      line-height: 1.35;
+    }
+
+    .code-label {
+      position: absolute;
+      color: var(--muted);
+      font-size: 23px;
+      letter-spacing: 0.02em;
+    }
+
+    pre.code {
+      position: absolute;
+      padding: 24px 28px;
+      overflow: hidden;
+      border: 1px solid rgba(6, 182, 212, 0.22);
+      border-radius: 24px;
+      background:
+        linear-gradient(180deg, rgba(6, 182, 212, 0.10), transparent 54px),
+        var(--code);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 22px 50px rgba(0, 0, 0, 0.28);
+      color: #c7f9ff;
+      font-family: "Cascadia Code", "Fira Code", "Consolas", monospace;
+      font-size: 21px;
+      line-height: 1.32;
+      white-space: pre-wrap;
+      tab-size: 2;
+    }
+
+    .code.compact {
+      padding: 18px 22px;
+      font-size: 18px;
+      line-height: 1.24;
+    }
+
+    .code.tiny {
+      padding: 18px 22px;
+      font-size: 16px;
+      line-height: 1.18;
+    }
+
+    .code.flow-code {
+      padding: 14px 18px;
+      font-size: 15px;
+      line-height: 1.12;
+    }
+
+    .code.micro {
+      padding: 12px 16px;
+      font-size: 13.5px;
+      line-height: 1.08;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 40px;
+      padding: 7px 16px;
+      border-radius: 999px;
+      background: rgba(6, 182, 212, 0.13);
+      color: var(--accent);
+      font-weight: 700;
+    }
+
+    .grid-dots {
+      position: absolute;
+      inset: auto 0 0 auto;
+      width: 360px;
+      height: 250px;
+      opacity: 0.22;
+      background-image: radial-gradient(circle, var(--accent) 1.4px, transparent 1.4px);
+      background-size: 22px 22px;
+      pointer-events: none;
+    }
+
+    .title-slide .headline {
+      position: absolute;
+      left: 128px;
+      top: 178px;
+      width: 910px;
+      font-size: 80px;
+      line-height: 0.96;
+      letter-spacing: -0.055em;
+      color: #f8fafc;
+    }
+
+    .title-slide .headline span {
+      display: block;
+      color: var(--accent);
+    }
+
+    .title-slide .report {
+      position: absolute;
+      left: 130px;
+      top: 518px;
+      font-size: 35px;
+      color: var(--text);
+      letter-spacing: 0.02em;
+    }
+
+    .title-slide .date {
+      position: absolute;
+      left: 130px;
+      top: 586px;
+      color: var(--fix);
+      font-size: 29px;
+      letter-spacing: 0.08em;
+    }
+
+    .title-slide .author {
+      position: absolute;
+      left: 130px;
+      top: 704px;
+      color: var(--muted);
+      font-size: 24px;
+      letter-spacing: 0.16em;
+    }
+
+    .title-slide .spec {
+      position: absolute;
+      left: 130px;
+      top: 760px;
+      color: var(--muted);
+      font-size: 25px;
+    }
+
+    .hero-network {
+      position: absolute;
+      right: 145px;
+      top: 166px;
+      width: 430px;
+      height: 430px;
+      border: 1px solid rgba(6, 182, 212, 0.24);
+      border-radius: 46px;
+      background: rgba(2, 6, 23, 0.42);
+      box-shadow: 0 0 80px rgba(6, 182, 212, 0.12);
+    }
+
+    .hero-network .node {
+      position: absolute;
+      width: 124px;
+      height: 124px;
+      display: grid;
+      place-items: center;
+      border-radius: 28px;
+      border: 1px solid rgba(6, 182, 212, 0.38);
+      background: rgba(30, 41, 59, 0.92);
+      color: #ecfeff;
+      font-size: 25px;
+      font-weight: 800;
+      text-align: center;
+      box-shadow: 0 0 30px rgba(6, 182, 212, 0.18);
+    }
+
+    .hero-network .node:nth-child(1) {
+      left: 42px;
+      top: 52px;
+    }
+
+    .hero-network .node:nth-child(2) {
+      right: 42px;
+      top: 152px;
+    }
+
+    .hero-network .node:nth-child(3) {
+      left: 88px;
+      bottom: 52px;
+    }
+
+    .hero-network .wire {
+      position: absolute;
+      height: 3px;
+      border-radius: 999px;
+      background: linear-gradient(90deg, var(--accent), rgba(16, 185, 129, 0.8));
+      transform-origin: left center;
+      opacity: 0.88;
+    }
+
+    .hero-network .wire.a {
+      left: 151px;
+      top: 124px;
+      width: 176px;
+      transform: rotate(31deg);
+    }
+
+    .hero-network .wire.b {
+      left: 278px;
+      top: 276px;
+      width: 164px;
+      transform: rotate(143deg);
+    }
+
+    .hero-network .wire.c {
+      left: 146px;
+      top: 308px;
+      width: 136px;
+      transform: rotate(-103deg);
+    }
+
+    .goal-card {
+      left: 144px;
+      top: 216px;
+      width: 1312px;
+      height: 150px;
+    }
+
+    .why-card {
+      left: 144px;
+      top: 420px;
+      width: 648px;
+      height: 252px;
+    }
+
+    .test-card {
+      left: 832px;
+      top: 420px;
+      width: 624px;
+      height: 252px;
+    }
+
+    .split-list {
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .split-list li {
+      margin: 10px 0;
+      padding-left: 24px;
+      border-left: 4px solid rgba(6, 182, 212, 0.55);
+    }
+
+    .flow {
+      position: absolute;
+      left: 96px;
+      top: 198px;
+      width: 1310px;
+      height: 285px;
+    }
+
+    .flow .flow-node,
+    .flow .queue,
+    .flow .host,
+    .flow .display {
+      position: absolute;
+      display: grid;
+      place-items: center;
+      border-radius: 22px;
+      text-align: center;
+      font-weight: 800;
+    }
+
+    .flow .host {
+      left: 0;
+      top: 0;
+      width: 320px;
+      height: 80px;
+      border: 1px solid rgba(148, 163, 184, 0.22);
+      background: rgba(2, 6, 23, 0.72);
+      color: var(--muted);
+      font-size: 30px;
+    }
+
+    .flow .flow-node {
+      top: 142px;
+      width: 230px;
+      height: 100px;
+      border: 1px solid rgba(6, 182, 212, 0.35);
+      background: var(--panel-soft);
+      color: #ecfeff;
+      font-size: 24px;
+      line-height: 1.1;
+    }
+
+    .flow .seed {
+      left: 0;
+    }
+
+    .flow .subdivide {
+      left: 500px;
+      width: 290px;
+    }
+
+    .flow .write {
+      left: 1035px;
+    }
+
+    .flow .queue {
+      top: 154px;
+      width: 118px;
+      height: 76px;
+      border: 1px solid rgba(245, 158, 11, 0.34);
+      background: var(--risk-soft);
+      color: var(--risk);
+      font-size: 30px;
+    }
+
+    .flow .q1 {
+      left: 325px;
+    }
+
+    .flow .q2 {
+      left: 862px;
+    }
+
+    .flow .display {
+      left: 1025px;
+      top: 252px;
+      width: 270px;
+      height: 78px;
+      border: 1px solid rgba(16, 185, 129, 0.34);
+      background: var(--fix-soft);
+      color: var(--fix);
+      font-size: 25px;
+    }
+
+    .flow .arrow {
+      position: absolute;
+      color: var(--accent);
+      font-size: 50px;
+      font-weight: 900;
+    }
+
+    .flow .down1 {
+      left: 146px;
+      top: 74px;
+    }
+
+    .flow .a1 {
+      left: 247px;
+      top: 155px;
+    }
+
+    .flow .a2 {
+      left: 445px;
+      top: 155px;
+    }
+
+    .flow .a3 {
+      left: 796px;
+      top: 155px;
+    }
+
+    .flow .a4 {
+      left: 984px;
+      top: 155px;
+    }
+
+    .flow .down2 {
+      left: 1130px;
+      top: 224px;
+      color: var(--fix);
+    }
+
+    .flow .back {
+      position: absolute;
+      left: 330px;
+      top: 94px;
+      color: var(--muted);
+      font-size: 23px;
+      letter-spacing: 0.01em;
+    }
+
+    .role-table,
+    .vis-table {
+      position: absolute;
+      border-collapse: separate;
+      border-spacing: 0;
+      overflow: hidden;
+      border: 1px solid rgba(148, 163, 184, 0.24);
+      border-radius: 22px;
+      background: rgba(2, 6, 23, 0.36);
+      color: var(--text);
+    }
+
+    .role-table {
+      left: 96px;
+      top: 172px;
+      width: 1408px;
+      height: 230px;
+      font-size: 23px;
+    }
+
+    .role-table th,
+    .role-table td,
+    .vis-table th,
+    .vis-table td {
+      padding: 15px 18px;
+      border-right: 1px solid rgba(148, 163, 184, 0.16);
+      border-bottom: 1px solid rgba(148, 163, 184, 0.16);
+      vertical-align: middle;
+    }
+
+    .role-table th,
+    .vis-table th {
+      background: rgba(6, 182, 212, 0.13);
+      color: var(--accent);
+      font-weight: 800;
+      text-align: left;
+    }
+
+    .role-table tr:last-child td,
+    .vis-table tr:last-child td {
+      border-bottom: 0;
+    }
+
+    .role-table th:last-child,
+    .role-table td:last-child,
+    .vis-table th:last-child,
+    .vis-table td:last-child {
+      border-right: 0;
+    }
+
+    .dispatch-line {
+      position: absolute;
+      left: 96px;
+      top: 438px;
+      width: 1408px;
+      padding: 20px 28px;
+      border: 1px solid rgba(6, 182, 212, 0.26);
+      border-radius: 22px;
+      background: rgba(6, 182, 212, 0.09);
+      color: #cffafe;
+      font-size: 31px;
+      font-weight: 800;
+    }
+
+    .protocol {
+      left: 96px;
+      top: 210px;
+      width: 560px;
+      height: 608px;
+    }
+
+    .protocol p {
+      margin-bottom: 18px;
+      color: var(--muted);
+    }
+
+    .protocol ol {
+      margin: 10px 0 24px 28px;
+      padding: 0;
+    }
+
+    .protocol li {
+      margin: 8px 0;
+      font-size: 24px;
+    }
+
+    .bug-row {
+      position: absolute;
+      left: 136px;
+      width: 1328px;
+      height: 120px;
+      border: 1px solid rgba(148, 163, 184, 0.20);
+      border-radius: 24px;
+      background: linear-gradient(90deg, rgba(245, 158, 11, 0.12), rgba(30, 41, 59, 0.76));
+    }
+
+    .bug-row .bug-id {
+      position: absolute;
+      left: 24px;
+      top: 25px;
+      color: var(--risk);
+      font-size: 27px;
+      font-weight: 900;
+    }
+
+    .bug-row .bug-copy {
+      position: absolute;
+      left: 136px;
+      top: 22px;
+      width: 690px;
+    }
+
+    .bug-row h3 {
+      color: var(--text);
+      font-size: 27px;
+      margin-bottom: 8px;
+    }
+
+    .bug-row p {
+      color: var(--muted);
+      font-size: 22px;
+      line-height: 1.18;
+    }
+
+    .bug-row .fix-box {
+      position: absolute;
+      right: 24px;
+      top: 20px;
+      width: 490px;
+      height: 80px;
+      display: grid;
+      align-items: center;
+      padding: 0 24px;
+      border-radius: 18px;
+      border: 1px solid rgba(16, 185, 129, 0.30);
+      background: var(--fix-soft);
+      color: #bbf7d0;
+      font-size: 23px;
+      font-weight: 800;
+    }
+
+    .vis-table {
+      left: 96px;
+      top: 638px;
+      width: 760px;
+      height: 168px;
+      font-size: 21px;
+    }
+
+    .vis-table th,
+    .vis-table td {
+      text-align: center;
+      padding: 8px 14px;
+      line-height: 1.05;
+    }
+
+    .vis-table th:first-child,
+    .vis-table td:first-child {
+      text-align: left;
+    }
+
+    .legend-card {
+      left: 910px;
+      top: 650px;
+      width: 486px;
+      height: 126px;
+      padding: 22px 28px;
+    }
+
+    .legend-card h3 {
+      margin-bottom: 8px;
+      font-size: 25px;
+    }
+
+    .legend-card p.small {
+      font-size: 20px;
+      line-height: 1.22;
+    }
+
+    .algorithm-card {
+      left: 96px;
+      top: 184px;
+      width: 640px;
+      height: 374px;
+    }
+
+    .algorithm-card p {
+      font-size: 22px;
+      line-height: 1.2;
+      margin-top: 14px;
+      white-space: pre-line;
+    }
+
+    .config-card {
+      left: 1066px;
+      top: 696px;
+      width: 380px;
+      height: 128px;
+      display: grid;
+      align-content: center;
+      text-align: center;
+      border-color: rgba(16, 185, 129, 0.36);
+      background: linear-gradient(145deg, rgba(16, 185, 129, 0.16), rgba(15, 23, 42, 0.86));
+    }
+
+    .config-card h3 {
+      margin-bottom: 8px;
+      color: var(--fix);
+      font-size: 24px;
+    }
+
+    .config-card p {
+      font-size: 31px;
+      font-weight: 900;
+      line-height: 1.16;
+    }
+
+    .done-card {
+      left: 96px;
+      top: 182px;
+      width: 720px;
+      height: 360px;
+      padding: 26px 34px;
+    }
+
+    .done-card .phase {
+      margin: 8px 0;
+      padding: 10px 18px;
+      border-radius: 18px;
+      background: rgba(16, 185, 129, 0.10);
+    }
+
+    .done-card .phase strong {
+      display: block;
+      margin-bottom: 4px;
+      color: var(--fix);
+      font-size: 21px;
+    }
+
+    .done-card .phase span {
+      color: var(--text);
+      font-size: 19px;
+      line-height: 1.16;
+    }
+
+    .achievement-card {
+      left: 96px;
+      top: 572px;
+      width: 720px;
+      height: 222px;
+      padding: 26px 34px;
+    }
+
+    .achievement-card ul,
+    .next-card ul {
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .achievement-card li {
+      margin: 8px 0;
+      color: var(--text);
+      font-size: 20px;
+    }
+
+    .next-card {
+      left: 866px;
+      top: 182px;
+      width: 590px;
+      height: 612px;
+      padding: 26px 34px;
+    }
+
+    .next-card li {
+      margin: 0 0 15px;
+      padding: 14px 20px;
+      border-left: 4px solid var(--accent);
+      border-radius: 0 18px 18px 0;
+      background: rgba(6, 182, 212, 0.08);
+    }
+
+    .next-card strong {
+      display: block;
+      color: #cffafe;
+      font-size: 23px;
+      margin-bottom: 5px;
+    }
+
+    .next-card span {
+      color: var(--muted);
+      font-size: 20px;
+      line-height: 1.25;
+    }
+
+    .evidence-subtitle {
+      position: absolute;
+      left: 96px;
+      top: 162px;
+      width: 1408px;
+      color: var(--muted);
+      font-size: 25px;
+    }
+
+    .source-label {
+      position: absolute;
+      left: 96px;
+      top: 206px;
+      color: var(--accent);
+      font-family: "Cascadia Code", "Consolas", monospace;
+      font-size: 23px;
+    }
+
+    .evidence-code {
+      left: 120px;
+      top: 272px;
+      width: 672px;
+      height: 528px;
+      font-size: 22px;
+      line-height: 1.34;
+    }
+
+    .side-card {
+      left: 904px;
+      width: 600px;
+      height: 164px;
+      padding: 22px 26px;
+    }
+
+    .side-card h3 {
+      margin-bottom: 8px;
+      font-size: 24px;
+    }
+
+    .side-card p {
+      font-size: 22px;
+      line-height: 1.22;
+    }
+
+    .what {
+      top: 206px;
+    }
+
+    .risk-card {
+      top: 414px;
+      border-color: rgba(245, 158, 11, 0.28);
+      background: linear-gradient(145deg, rgba(245, 158, 11, 0.15), rgba(15, 23, 42, 0.88));
+    }
+
+    .risk-card h3 {
+      color: var(--risk);
+    }
+
+    .fix-card {
+      top: 622px;
+      border-color: rgba(16, 185, 129, 0.28);
+      background: linear-gradient(145deg, rgba(16, 185, 129, 0.14), rgba(15, 23, 42, 0.88));
+    }
+
+    .fix-card h3 {
+      color: var(--fix);
+    }
+
+    @media (max-width: 820px) {
+      .deck {
+        gap: 18px;
+        padding: 18px 0 38px;
+      }
+
+      .slide-shell {
+        width: calc(100vw - 24px);
+        border-radius: 14px;
+      }
+    }
+
+    @media print {
+      @page {
+        size: 16.6667in 9.375in;
+        margin: 0;
+      }
+
+      html,
+      body {
+        width: 1600px;
+        background: #fff;
+      }
+
+      .deck {
+        display: block;
+        padding: 0;
+      }
+
+      .slide-shell {
+        width: 1600px;
+        height: 900px;
+        margin: 0;
+        border-radius: 0;
+        box-shadow: none;
+        break-after: page;
+        page-break-after: always;
+      }
+
+      .slide {
+        transform: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="deck" aria-label="Monthly report slide deck">
+    <div class="slide-shell" id="slide-1">
+      <section class="slide title-slide" aria-label="Slide 1">
+        <div class="grid-dots"></div>
+        <h1 class="headline">Vulkan Persistent Thread<span>Producer-Consumer Network POC</span></h1>
+        <p class="report">Monthly Progress Report</p>
+        <p class="date">2026 / 04</p>
+        <p class="author">LUO-WEN-CHIEN</p>
+        <p class="spec">AMD RX 7900 XTX&nbsp;&nbsp;|&nbsp;&nbsp;RDNA 3&nbsp;&nbsp;|&nbsp;&nbsp;Vulkan 1.4</p>
+        <div class="hero-network" aria-hidden="true">
+          <div class="node">Node A<br>Seed</div>
+          <div class="node">Node B<br>Split</div>
+          <div class="node">Node C<br>Write</div>
+          <div class="wire a"></div>
+          <div class="wire b"></div>
+          <div class="wire c"></div>
+        </div>
+        <div class="page">1 / 8</div>
+      </section>
+    </div>
+
+    <div class="slide-shell" id="slide-2">
+      <section class="slide" aria-label="Slide 2">
+        <h2 class="slide-title">Research Goal &amp; Motivation</h2>
+        <article class="card goal-card">
+          <h3>Goal</h3>
+          <p>Implement a <span class="em">D3D12 Work Graph analogue</span> on Vulkan using persistent compute shaders</p>
+        </article>
+        <article class="card why-card">
+          <h3>Why</h3>
+          <ul class="split-list">
+            <li>Find key considerations during design</li>
+            <li>Measure scheduling overhead &amp; on-chip memory utilization</li>
+            <li>Target: AMD RX 7900 XTX (RDNA 3, 96 CUs, 24GB VRAM)</li>
+          </ul>
+        </article>
+        <article class="card test-card">
+          <h3>Test Case</h3>
+          <p>Koch Snowflake fractal generation + real-time rendering</p>
+          <p class="small muted" style="margin-top: 22px;">Recursive branching workload: 1 edge → 4 sub-edges per level</p>
+        </article>
+        <div class="page">2 / 8</div>
+      </section>
+    </div>
+
+    <div class="slide-shell" id="slide-3">
+      <section class="slide" aria-label="Slide 3">
+        <h2 class="slide-title">System Architecture</h2>
+        <div class="flow" aria-label="Architecture flow">
+          <div class="host">HOST (CPU)</div>
+          <div class="arrow down1">▼</div>
+          <div class="flow-node seed">Node A<br>(Seed)</div>
+          <div class="arrow a1">▶</div>
+          <div class="queue q1">Q1</div>
+          <div class="arrow a2">▶</div>
+          <div class="flow-node subdivide">Node B<br>(Subdivide)</div>
+          <div class="back">↺ feedback (depth &lt; MAX)</div>
+          <div class="arrow a3">▶</div>
+          <div class="queue q2">Q2</div>
+          <div class="arrow a4">▶</div>
+          <div class="flow-node write">Node C<br>(Write VB)</div>
+          <div class="arrow down2">▼</div>
+          <div class="display">Vertex Buffer<br>(SSBO + VB)</div>
+        </div>
+        <div class="code-label" style="left: 96px; top: 612px;">Per-Frame Command Buffer Flow:</div>
+        <pre class="code flow-code" style="left: 120px; top: 654px; width: 1360px; height: 160px;">// buildCommandBuffers() - per frame
+vkCmdFillBuffer(cmd, controlBuf, ...);    // 1. GPU Reset
+vkCmdFillBuffer(cmd, q1Buf/q2Buf, ...);
+vkCmdPipelineBarrier(...TRANSFER → COMPUTE); // 2. Barrier
+vkCmdDispatch(cmd, 96, 1, 1);             // 3. Compute (3072 threads)
+vkCmdPipelineBarrier(...COMPUTE → VERTEX);// 4. Barrier
+vkCmdDraw(cmd, 24576, 1, 0, 0);          // 5. Render</pre>
+        <div class="page">3 / 8</div>
+      </section>
+    </div>
+
+    <div class="slide-shell" id="slide-4">
+      <section class="slide" aria-label="Slide 4">
+        <h2 class="slide-title">Persistent Thread Model</h2>
+        <table class="role-table" aria-label="Workgroup role table">
+          <thead>
+            <tr>
+              <th>Workgroup</th>
+              <th>Role</th>
+              <th>Queue</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>WG 0</td>
+              <td>Node A + B</td>
+              <td>Seed → Q1</td>
+              <td>Thread 0 seeds 3 edges, then all do Node B</td>
+            </tr>
+            <tr>
+              <td>WG 1–71</td>
+              <td>Node B</td>
+              <td>Q1 → Q1 / Q2</td>
+              <td>Pop Q1, subdivide, push back Q1 or forward Q2</td>
+            </tr>
+            <tr>
+              <td>WG 72–95</td>
+              <td>Node C</td>
+              <td>Q2 → VB</td>
+              <td>Pop Q2, write vertices, count → stopFlag</td>
+            </tr>
+          </tbody>
+        </table>
+        <div class="dispatch-line">Single dispatch: vkCmdDispatch(96, 1, 1) = 96 WG × 32 threads = 3,072 persistent threads</div>
+        <div class="code-label" style="left: 96px; top: 524px;">Shader Main Loop Structure:</div>
+        <pre class="code micro" style="left: 120px; top: 560px; width: 1360px; height: 260px;">void main() {
+    uint wgId = gl_WorkGroupID.x;
+    uint localId = gl_LocalInvocationID.x;
+    // Node A: WG 0, Thread 0 seeds 3 edges (once)
+    if (wgId == 0 && localId == 0) {
+        if (atomicCompSwap(control.seedDone, 0, 1) == 0)
+            pushQ1(edge_AB); pushQ1(edge_BC); pushQ1(edge_CA);
+    }
+    barrier(); memoryBarrierBuffer();
+    // Main persistent loop
+    while (control.stopFlag == 0) {
+        if (wgId &lt; NODE_C_START) { /* Node B */ }
+        else                     { /* Node C */ }
+    }
+}</pre>
+        <div class="page">4 / 8</div>
+      </section>
+    </div>
+
+    <div class="slide-shell" id="slide-5">
+      <section class="slide" aria-label="Slide 5">
+        <h2 class="slide-title">Atomic Queue Mechanism</h2>
+        <article class="card protocol">
+          <h3>Ring Buffer Structure</h3>
+          <p><span class="em">QueueControl:</span> head / tail / count</p>
+          <p><span class="em">Task:</span> payload[6] (4×float + depth + ready)</p>
+          <h3 style="margin-top: 24px;">Push Protocol:</h3>
+          <ol>
+            <li>CAS count (reserve slot)</li>
+            <li>atomicAdd tail (get slot index)</li>
+            <li>Write payload[0–4]</li>
+            <li>memoryBarrierBuffer()</li>
+            <li>atomicExchange(ready, 1)</li>
+          </ol>
+          <h3>Pop Protocol:</h3>
+          <ol>
+            <li>CAS count (claim item)</li>
+            <li>atomicAdd head (get slot)</li>
+            <li>Spin: atomicCompSwap(ready,1,0)</li>
+            <li>Read payload</li>
+          </ol>
+        </article>
+        <div class="code-label" style="left: 704px; top: 194px;">pushQ1() Implementation:</div>
+        <pre class="code tiny" style="left: 728px; top: 250px; width: 780px; height: 568px;">bool pushQ1(uint p0, uint p1, uint p2,
+            uint p3, uint p4) {
+  while (control.stopFlag == 0) {
+    uint cur = control.q1.count;
+    if (cur &lt; QUEUE_SIZE) {
+      // CAS: reserve a slot
+      if (atomicCompSwap(control.q1.count,
+                         cur, cur+1) == cur) {
+        uint slot = atomicAdd(
+          control.q1.tail, 1) % QUEUE_SIZE;
+        // Write payload
+        queue1.tasks[slot].payload[0] = p0;
+        queue1.tasks[slot].payload[1] = p1;
+        queue1.tasks[slot].payload[2] = p2;
+        queue1.tasks[slot].payload[3] = p3;
+        queue1.tasks[slot].payload[4] = p4;
+        memoryBarrierBuffer();
+        // Signal ready (atomic!)
+        atomicExchange(
+          queue1.tasks[slot].payload[5], 1u);
+        return true;
+      }
+    }
+  }
+  return false;
+}</pre>
+        <div class="page">5 / 8</div>
+      </section>
+    </div>
+
+    <div class="slide-shell" id="slide-6">
+      <section class="slide" aria-label="Slide 6">
+        <h2 class="slide-title">Cross-Workgroup Memory Sync</h2>
+        <div class="bug-row" style="top: 178px;">
+          <div class="bug-id">Bug 1</div>
+          <div class="bug-copy">
+            <h3>Missing coherent modifier</h3>
+            <p>Node C read stale count from L0/L1 cache → no task consumption</p>
+          </div>
+          <div class="fix-box">Fix: Added coherent to all SSBO declarations</div>
+        </div>
+        <div class="bug-row" style="top: 314px;">
+          <div class="bug-id">Bug 2</div>
+          <div class="bug-copy">
+            <h3>Producer-consumer data race</h3>
+            <p>Producer increments count then writes data; consumer reads uninitialized</p>
+          </div>
+          <div class="fix-box">Fix: Added per-slot payload[5] ready flag protocol</div>
+        </div>
+        <div class="bug-row" style="top: 450px;">
+          <div class="bug-id">Bug 3</div>
+          <div class="bug-copy">
+            <h3>Plain store cross-CU unreliable</h3>
+            <p>Plain store of ready flag not visible across CUs</p>
+          </div>
+          <div class="fix-box">Fix: All ready flags use atomicExchange / atomicCompSwap</div>
+        </div>
+        <div class="code-label" style="left: 96px; top: 606px;">Memory Visibility:</div>
+        <table class="vis-table" aria-label="Memory visibility table">
+          <thead>
+            <tr>
+              <th>Method</th>
+              <th>Same WF</th>
+              <th>Same CU</th>
+              <th>Cross-CU</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Plain load/store</td>
+              <td class="fix">✔</td>
+              <td class="risk">~</td>
+              <td class="risk">✘</td>
+            </tr>
+            <tr>
+              <td>coherent</td>
+              <td class="fix">✔</td>
+              <td class="fix">✔</td>
+              <td class="risk">~</td>
+            </tr>
+            <tr>
+              <td>Atomic (CAS/Exch)</td>
+              <td class="fix">✔</td>
+              <td class="fix">✔</td>
+              <td class="fix">✔</td>
+            </tr>
+          </tbody>
+        </table>
+        <article class="card legend-card">
+          <h3>Takeaway</h3>
+          <p class="small">Cross-CU queue state needs atomic publish/consume; <span class="em">coherent</span> alone is not enough.</p>
+        </article>
+        <div class="page">6 / 8</div>
+      </section>
+    </div>
+
+    <div class="slide-shell" id="slide-7">
+      <section class="slide" aria-label="Slide 7">
+        <h2 class="slide-title">Koch Snowflake Algorithm</h2>
+        <article class="card algorithm-card">
+          <h3>Subdivision Rule:</h3>
+          <p>Each edge P1→P2 splits into 4 sub-edges:
+
+  P1 → A → C → B → P2
+
+A, B = 1/3, 2/3 points along P1P2
+C = apex point, rotated +60° from A
+
+Growth: 3 × 4^depth edges
+  depth=4: 768 edges (1,536 vertices)
+  depth=6: 12,288 edges (24,576 vertices)</p>
+        </article>
+        <div class="code-label" style="left: 800px; top: 184px;">Node B: Subdivision Core:</div>
+        <pre class="code tiny" style="left: 824px; top: 240px; width: 684px; height: 402px;">// Koch subdivision: 1 edge -&gt; 4 sub-edges
+float dx = (x2 - x1) / 3.0;
+float dy = (y2 - y1) / 3.0;
+// A = 1/3 point, B = 2/3 point
+float kax = x1 + dx,   kay = y1 + dy;
+float kbx = x1 + 2*dx, kby = y1 + 2*dy;
+// C = apex (rotate +60° from A)
+float cos60 = 0.5;
+float sin60 = 0.8660254037844387;
+float kcx = kax + dx*cos60 - dy*sin60;
+float kcy = kay + dx*sin60 + dy*cos60;
+// Push 4 sub-edges (depth+1)
+pushQ1(P1→A); pushQ1(A→C);
+pushQ1(C→B);  pushQ1(B→P2);</pre>
+        <div class="code-label" style="left: 96px; top: 618px;">GPU Self-Termination:</div>
+        <pre class="code compact" style="left: 120px; top: 674px; width: 820px; height: 150px;">// Node C: auto-shutdown when all edges processed
+uint processed = atomicAdd(control.totalProcessed, 1) + 1;
+if (processed &gt;= MAX_DEPTH_EDGES) {
+    atomicExchange(control.stopFlag, 1u);  // all threads exit
+}</pre>
+        <article class="card config-card">
+          <h3>Current Config (depth=6)</h3>
+          <p>12,288 edges<br>24,576 vertices</p>
+        </article>
+        <div class="page">7 / 8</div>
+      </section>
+    </div>
+
+    <div class="slide-shell" id="slide-8">
+      <section class="slide" aria-label="Slide 8">
+        <h2 class="slide-title">Progress &amp; Next Steps</h2>
+        <article class="card done-card">
+          <h3>Completed</h3>
+          <div class="phase">
+            <strong>✔ Phase 1-2</strong>
+            <span>Persistent threading, CAS-based queue, CPU monitoring</span>
+          </div>
+          <div class="phase">
+            <strong>✔ Phase 3</strong>
+            <span>Node A→B→C pipeline, feedback loop, workgroup roles</span>
+          </div>
+          <div class="phase">
+            <strong>✔ Phase 4.1</strong>
+            <span>GPU self-termination, per-frame compute+render, windowed display</span>
+          </div>
+        </article>
+        <article class="card achievement-card">
+          <h3>Key Achievements:</h3>
+          <ul>
+            <li>• Cross-CU atomic sync validated on RDNA 3</li>
+            <li>• Zero CPU intervention (GPU self-scheduling)</li>
+            <li>• Single dispatch replaces multi-pass pipeline</li>
+            <li>• Koch snowflake: deterministic output verified</li>
+          </ul>
+        </article>
+        <article class="card next-card">
+          <h3>Next: Phase 4.2</h3>
+          <ul>
+            <li><strong>GPU Timestamp Queries</strong><span>vkCmdWriteTimestamp for compute timing measurement</span></li>
+            <li><strong>CAS Failure Counters</strong><span>Quantify atomic contention &amp; scheduling overhead</span></li>
+            <li><strong>LDS Queues</strong><span>Intra-workgroup shared memory (10-100× latency reduction)</span></li>
+            <li><strong>Subgroup Optimization</strong><span>ballot/shuffle for RDNA3 occupancy tuning</span></li>
+          </ul>
+        </article>
+        <div class="page">8 / 8</div>
+      </section>
+    </div>
+
+    <div class="slide-shell" id="slide-9">
+      <section class="slide" aria-label="Slide 9">
+        <h2 class="slide-title">Per-frame pipeline</h2>
+        <p class="evidence-subtitle">Code evidence: reset, compute, barrier, and render are serialized in one command buffer.</p>
+        <p class="source-label">workgraph_poc.cpp:267-322</p>
+        <pre class="code evidence-code">vkCmdFillBuffer(cmd, compute.controlBuf, ...);
+vkCmdFillBuffer(cmd, compute.q1Buf, ...);
+vkCmdFillBuffer(cmd, compute.q2Buf, ...);
+
+vkCmdPipelineBarrier(... TRANSFER -&gt; COMPUTE ...);
+vkCmdDispatch(cmd, NUM_WORKGROUPS, 1, 1);
+
+vkCmdPipelineBarrier(... COMPUTE -&gt; VERTEX_INPUT ...);
+vkCmdDraw(cmd, EXPECTED_VERTICES, 1, 0, 0);</pre>
+        <article class="card side-card what">
+          <h3>What it does</h3>
+          <p>A deterministic per-frame baseline: reset, persistent compute, sync, then fixed-count rendering.</p>
+        </article>
+        <article class="card side-card risk-card">
+          <h3>Risk</h3>
+          <p>Profiler-friendly, but not necessarily optimal. It does not test async compute / graphics overlap.</p>
+        </article>
+        <article class="card side-card fix-card">
+          <h3>Possible fix</h3>
+          <p>Keep as correctness baseline; later split compute/gfx scheduling or reduce synchronization scope.</p>
+        </article>
+        <div class="page">9 / 14</div>
+      </section>
+    </div>
+
+    <div class="slide-shell" id="slide-10">
+      <section class="slide" aria-label="Slide 10">
+        <h2 class="slide-title">GPU-side termination</h2>
+        <p class="evidence-subtitle">Code evidence: completion is decided by Node C using a global processed-edge counter.</p>
+        <p class="source-label">headless.comp:153-160</p>
+        <pre class="code evidence-code">uint base = atomicAdd(control.vertexCount, 2);
+output_vb.vertices[base]     = vec2(x1, y1);
+output_vb.vertices[base + 1] = vec2(x2, y2);
+
+uint processed = atomicAdd(control.totalProcessed, 1) + 1;
+if (processed &gt;= MAX_DEPTH_EDGES) {
+    atomicExchange(control.stopFlag, 1u);
+}</pre>
+        <article class="card side-card what">
+          <h3>What it does</h3>
+          <p>No CPU polling. The GPU terminates itself after the expected number of output edges.</p>
+        </article>
+        <article class="card side-card risk-card">
+          <h3>Risk</h3>
+          <p>Count-only termination can fail if MAX_DEPTH_EDGES or workload shape is wrong.</p>
+        </article>
+        <article class="card side-card fix-card">
+          <h3>Possible fix</h3>
+          <p>Add queue-drain or in-flight accounting as a second termination condition.</p>
+        </article>
+        <div class="page">10 / 14</div>
+      </section>
+    </div>
+
+    <div class="slide-shell" id="slide-11">
+      <section class="slide" aria-label="Slide 11">
+        <h2 class="slide-title">Static role mapping</h2>
+        <p class="evidence-subtitle">Code evidence: workgroup ID hard-partitions producer and consumer roles.</p>
+        <p class="source-label">workgraph_poc.cpp:10-11, headless.comp:92-138</p>
+        <pre class="code evidence-code">#define NUM_WORKGROUPS 96
+#define NODE_C_START 72
+
+while (control.stopFlag == 0) {
+    if (wgId &lt; NODE_C_START) {
+        // NODE B: Subdivider
+    } else {
+        // NODE C: Writer
+    }
+}</pre>
+        <article class="card side-card what">
+          <h3>What it does</h3>
+          <p>Current role split is fixed: 72 workgroups for subdivision, 24 for output writes.</p>
+        </article>
+        <article class="card side-card risk-card">
+          <h3>Risk</h3>
+          <p>Fixed B/C ratio can become imbalanced when queue pressure changes.</p>
+        </article>
+        <article class="card side-card fix-card">
+          <h3>Possible fix</h3>
+          <p>Treat NODE_C_START as a tuning knob; later consider pressure-driven role switching.</p>
+        </article>
+        <div class="page">11 / 14</div>
+      </section>
+    </div>
+
+    <div class="slide-shell" id="slide-12">
+      <section class="slide" aria-label="Slide 12">
+        <h2 class="slide-title">Fixed-size backing queues</h2>
+        <p class="evidence-subtitle">Code evidence: queue capacity is fixed and producers spin when no slot is available.</p>
+        <p class="source-label">workgraph_poc.cpp:8, headless.comp:29-45</p>
+        <pre class="code evidence-code">#define QUEUE_SIZE 16384
+
+bool pushQ1(...) {
+    while (control.stopFlag == 0) {
+        uint cur = control.q1.count;
+        if (cur &lt; QUEUE_SIZE) {
+            if (atomicCompSwap(control.q1.count, cur, cur + 1) == cur) {
+                uint slot = atomicAdd(control.q1.tail, 1) % QUEUE_SIZE;
+                ...
+            }
+        }
+    }
+}</pre>
+        <article class="card side-card what">
+          <h3>What it does</h3>
+          <p>A global ring buffer backs cross-workgroup producer-consumer handoff.</p>
+        </article>
+        <article class="card side-card risk-card">
+          <h3>Risk</h3>
+          <p>Too small increases retries and progress risk; too large increases memory footprint and locality pressure.</p>
+        </article>
+        <article class="card side-card fix-card">
+          <h3>Possible fix</h3>
+          <p>Define sizing from worst-case frontier growth plus safety margin; add pressure counters later.</p>
+        </article>
+        <div class="page">12 / 14</div>
+      </section>
+    </div>
+
+    <div class="slide-shell" id="slide-13">
+      <section class="slide" aria-label="Slide 13">
+        <h2 class="slide-title">Atomic queue handoff</h2>
+        <p class="evidence-subtitle">Code evidence: ready flag publishes a slot only after payload writes are visible.</p>
+        <p class="source-label">headless.comp:33-41, 97-101</p>
+        <pre class="code evidence-code">// Producer
+atomicCompSwap(control.q1.count, cur, cur + 1);
+uint slot = atomicAdd(control.q1.tail, 1) % QUEUE_SIZE;
+queue1.tasks[slot].payload[0] = p0;
+...
+memoryBarrierBuffer();
+atomicExchange(queue1.tasks[slot].payload[5], 1u);
+
+// Consumer
+while (atomicCompSwap(queue1.tasks[slot].payload[5], 1u, 0u) != 1u) { ... }</pre>
+        <article class="card side-card what">
+          <h3>What it does</h3>
+          <p>Correctness relies on atomics plus per-slot publish/consume protocol.</p>
+        </article>
+        <article class="card side-card risk-card">
+          <h3>Risk</h3>
+          <p>Global counters and ready flags can become contention hotspots as worker count scales.</p>
+        </article>
+        <article class="card side-card fix-card">
+          <h3>Possible fix</h3>
+          <p>Reduce global atomic pressure with batching, per-WG staging, or LDS/local queues.</p>
+        </article>
+        <div class="page">13 / 14</div>
+      </section>
+    </div>
+
+    <div class="slide-shell" id="slide-14">
+      <section class="slide" aria-label="Slide 14">
+        <h2 class="slide-title">Spin wait risk</h2>
+        <p class="evidence-subtitle">Code evidence: consumers busy-spin on ready flags; cost is identified but not measured in this report.</p>
+        <p class="source-label">headless.comp:99-101, 143-145</p>
+        <pre class="code evidence-code">// Q1 consumer waits for producer publish
+while (atomicCompSwap(queue1.tasks[slot].payload[5], 1u, 0u) != 1u) {
+    if (control.stopFlag != 0u) return;
+}
+
+// Q2 uses the same ready-flag spin protocol
+while (atomicCompSwap(queue2.tasks[slot].payload[5], 1u, 0u) != 1u) {
+    if (control.stopFlag != 0u) return;
+}</pre>
+        <article class="card side-card what">
+          <h3>What it does</h3>
+          <p>Busy-spin is part of the current correctness-first queue handoff design.</p>
+        </article>
+        <article class="card side-card risk-card">
+          <h3>Risk</h3>
+          <p>Under producer-consumer imbalance, retries may reduce effective throughput before arithmetic saturates.</p>
+        </article>
+        <article class="card side-card fix-card">
+          <h3>Possible fix</h3>
+          <p>Do not claim measured cost yet; later evaluate backoff, role switching, and shorter handoff windows.</p>
+        </article>
+        <div class="page">14 / 14</div>
+      </section>
+    </div>
+  </main>
+
+  <script>
+    const shells = Array.from(document.querySelectorAll(".slide-shell"));
+
+    function updateScale() {
+      const targetWidth = Math.min(1600, Math.max(320, window.innerWidth - (window.innerWidth <= 820 ? 24 : 48)));
+      document.documentElement.style.setProperty("--deck-scale", String(targetWidth / 1600));
+    }
+
+    function currentSlideIndex() {
+      const mid = window.scrollY + window.innerHeight / 2;
+      let best = 0;
+      let bestDistance = Number.POSITIVE_INFINITY;
+      shells.forEach((shell, index) => {
+        const center = shell.offsetTop + shell.offsetHeight / 2;
+        const distance = Math.abs(center - mid);
+        if (distance < bestDistance) {
+          best = index;
+          bestDistance = distance;
+        }
+      });
+      return best;
+    }
+
+    function applyOnlyMode() {
+      const only = Number(new URLSearchParams(location.search).get("only"));
+      if (!Number.isInteger(only) || only < 1 || only > shells.length) return;
+      shells.forEach((shell, index) => {
+        shell.hidden = index !== only - 1;
+      });
+    }
+
+    function go(delta) {
+      const next = Math.max(0, Math.min(shells.length - 1, currentSlideIndex() + delta));
+      shells[next].scrollIntoView({ behavior: "smooth", block: "center" });
+    }
+
+    function scrollToHashTarget() {
+      if (!location.hash) return;
+      const target = document.querySelector(location.hash);
+      if (target) {
+        target.scrollIntoView({ behavior: "auto", block: "center" });
+      }
+    }
+
+    window.addEventListener("resize", updateScale, { passive: true });
+    window.addEventListener("load", () => {
+      updateScale();
+      setTimeout(scrollToHashTarget, 50);
+    }, { once: true });
+    window.addEventListener("hashchange", scrollToHashTarget, { passive: true });
+    applyOnlyMode();
+    updateScale();
+    setTimeout(scrollToHashTarget, 50);
+
+    document.addEventListener("keydown", (event) => {
+      if (event.key === "ArrowRight" || event.key === "PageDown") {
+        event.preventDefault();
+        go(1);
+      }
+      if (event.key === "ArrowLeft" || event.key === "PageUp") {
+        event.preventDefault();
+        go(-1);
+      }
+    });
+  </script>
+</body>
+</html>

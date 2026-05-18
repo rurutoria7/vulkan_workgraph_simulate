@@ -1,0 +1,32 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm list:*)",
+      "Bash(npm install:*)",
+      "Bash(node:*)",
+      "Bash(python add_notes.py)",
+      "Bash(python -c ':*)",
+      "Bash(python remove_slide.py)",
+      "Bash(glslangValidator -V shaders/glsl/workgraph_poc/headless.comp -o shaders/workgraph_poc/headless.comp.spv)",
+      "Bash(cmake --build build --target workgraph_poc --config Release)",
+      "Bash(build/bin/Release/workgraph_poc.exe)",
+      "Bash(./build/bin/Release/workgraph_poc.exe)",
+      "Bash(python compileshaders.py --sample workgraph_poc)",
+      "Bash(cmake *)",
+      "Bash(python plot_koch.py)",
+      "Bash(python shaders/glsl/compileshaders.py)",
+      "Bash(glslangValidator -V koch.vert -o koch.vert.spv)",
+      "Bash(glslangValidator -V koch.frag -o koch.frag.spv)",
+      "Bash(timeout 10 ./workgraph_poc.exe)",
+      "Bash(python gen_report.py)",
+      "Bash(./workgraph_poc.exe)",
+      "Bash(start workgraph_poc.exe)",
+      "Bash(C:/CGV/Projects/D3DWorkgraph/workgraph_vulkan_poc/build/bin/Release/workgraph_poc.exe *)",
+      "PowerShell(cmake *)",
+      "Read(//c/Program Files/LibreOffice/program/**)",
+      "Read(//c/Program Files \\(x86\\)/LibreOffice/program/**)",
+      "Read(//c/Program Files/**)",
+      "Bash(/c/Program Files/LibreOffice/program/soffice.exe *)"
+    ]
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cmake --build *)",
+      "Bash(glslangValidator *)",
+      "Bash(build/bin/Release/workgraph_poc.exe*)"
+    ]
+  }
+}
