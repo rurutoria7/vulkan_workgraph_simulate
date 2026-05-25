@@ -57,6 +57,12 @@ struct QueueMetrics {
 struct DebugCounters {
 	QueueMetrics q1Shards[MAX_QUEUE_SHARDS];
 	QueueMetrics q2Shards[MAX_QUEUE_SHARDS];
+	uint32_t q2DequeueBatches;
+	uint32_t q2DequeueBatchSlots;
+	uint32_t q2DequeueBatchCasAttempts;
+	uint32_t q2DequeueBatchCasFail;
+	uint32_t q2DequeueBatchEmpty;
+	uint32_t q2DequeueBatchPartial;
 	uint32_t nodeASeedEdges;
 	uint32_t nodeBTasks;
 	uint32_t nodeBSubdivideTasks;
@@ -85,8 +91,8 @@ struct Task {
 
 static_assert(sizeof(QueueControl) == 4u * sizeof(uint32_t));
 static_assert(sizeof(QueueMetrics) == 14u * sizeof(uint32_t));
-static_assert(sizeof(DebugCounters) == (MAX_QUEUE_SHARDS * 14u * 2u + 8u) * sizeof(uint32_t));
-static_assert(sizeof(ControlBlock) == (MAX_QUEUE_SHARDS * 4u * 2u + 4u + MAX_QUEUE_SHARDS * 14u * 2u + 8u) * sizeof(uint32_t));
+static_assert(sizeof(DebugCounters) == (MAX_QUEUE_SHARDS * 14u * 2u + 14u) * sizeof(uint32_t));
+static_assert(sizeof(ControlBlock) == (MAX_QUEUE_SHARDS * 4u * 2u + 4u + MAX_QUEUE_SHARDS * 14u * 2u + 14u) * sizeof(uint32_t));
 
 class VulkanExample : public VulkanExampleBase
 {
@@ -123,6 +129,8 @@ public:
 		uint32_t q2ShardCapacity{ QUEUE_SIZE };
 		uint32_t nodeCStart{ NODE_C_START };
 		bool q1LanePop{ true };
+		bool q2DequeueBatch{ false };
+		uint32_t q2DequeueBatchLimit{ 32 };
 	} experiment{};
 
 	struct {
@@ -271,6 +279,13 @@ public:
 		if (hasArg("--wg-no-q1-lane-pop")) {
 			experiment.q1LanePop = false;
 		}
+		if (hasArg("--wg-q2-deq-batch")) {
+			experiment.q2DequeueBatch = true;
+		}
+		if (hasArg("--wg-no-q2-deq-batch")) {
+			experiment.q2DequeueBatch = false;
+		}
+		experiment.q2DequeueBatchLimit = getArgValue("--wg-q2-deq-batch-limit", experiment.q2DequeueBatchLimit);
 	}
 
 	void configureMetricsFromArgs()
@@ -410,6 +425,8 @@ public:
 			uint32_t q1QueueShards;
 			uint32_t q2QueueShards;
 			uint32_t enableQ1LanePop;
+			uint32_t enableQ2DequeueBatch;
+			uint32_t q2DequeueBatchLimit;
 		} specData = {
 			QUEUE_SIZE,
 			MAX_DEPTH,
@@ -418,9 +435,11 @@ public:
 			metrics.shaderCountersEnabled ? 1u : 0u,
 			experiment.q1QueueShards,
 			experiment.q2QueueShards,
-			experiment.q1LanePop ? 1u : 0u
+			experiment.q1LanePop ? 1u : 0u,
+			experiment.q2DequeueBatch ? 1u : 0u,
+			experiment.q2DequeueBatchLimit
 		};
-		VkSpecializationMapEntry specEntries[8] = {
+		VkSpecializationMapEntry specEntries[10] = {
 			{ 0, offsetof(decltype(specData), queueSize),     sizeof(uint32_t) },
 			{ 1, offsetof(decltype(specData), maxDepth),      sizeof(uint32_t) },
 			{ 2, offsetof(decltype(specData), nodeCStart),    sizeof(uint32_t) },
@@ -428,10 +447,12 @@ public:
 			{ 4, offsetof(decltype(specData), enableShaderMetrics), sizeof(uint32_t) },
 			{ 5, offsetof(decltype(specData), q1QueueShards), sizeof(uint32_t) },
 			{ 6, offsetof(decltype(specData), q2QueueShards), sizeof(uint32_t) },
-			{ 7, offsetof(decltype(specData), enableQ1LanePop), sizeof(uint32_t) }
+			{ 7, offsetof(decltype(specData), enableQ1LanePop), sizeof(uint32_t) },
+			{ 8, offsetof(decltype(specData), enableQ2DequeueBatch), sizeof(uint32_t) },
+			{ 9, offsetof(decltype(specData), q2DequeueBatchLimit), sizeof(uint32_t) }
 		};
 		VkSpecializationInfo specInfo = {};
-		specInfo.mapEntryCount = 8;
+		specInfo.mapEntryCount = 10;
 		specInfo.pMapEntries = specEntries;
 		specInfo.dataSize = sizeof(specData);
 		specInfo.pData = &specData;
@@ -681,6 +702,8 @@ public:
 				<< "q1_enq_attempt_mean,q1_enq_attempt_max,q1_enq_attempt_imbalance,q1_high_water_mean,q1_high_water_max,"
 				<< "q1_enq_ok,q1_enq_cas_fail,q1_enq_full,q1_deq_ok,q1_deq_cas_fail,q1_deq_empty,q1_ready_cas_fail,q1_ready_max_spin,q1_high_water,"
 				<< "q2_enq_ok,q2_enq_cas_fail,q2_enq_full,q2_deq_ok,q2_deq_cas_fail,q2_deq_empty,q2_ready_cas_fail,q2_ready_max_spin,q2_high_water,"
+				<< "q2_deq_batches,q2_deq_batch_slots,q2_deq_batch_cas_attempts,q2_deq_batch_cas_fail,q2_deq_batch_empty,q2_deq_batch_partial,"
+				<< "q2_deq_slots_per_batch,q2_deq_batch_enabled,q2_deq_batch_limit,"
 				<< "node_a_seed,node_b_tasks,node_b_subdivide,node_b_final,node_c_output,stop_writes\n";
 			headerPrinted = true;
 		}
@@ -733,6 +756,15 @@ public:
 			<< q2.readyCasFail << ","
 			<< q2.readyMaxSpin << ","
 			<< q2.highWater << ","
+			<< c.q2DequeueBatches << ","
+			<< c.q2DequeueBatchSlots << ","
+			<< c.q2DequeueBatchCasAttempts << ","
+			<< c.q2DequeueBatchCasFail << ","
+			<< c.q2DequeueBatchEmpty << ","
+			<< c.q2DequeueBatchPartial << ","
+			<< ratio(c.q2DequeueBatchSlots, c.q2DequeueBatches) << ","
+			<< (experiment.q2DequeueBatch ? 1u : 0u) << ","
+			<< experiment.q2DequeueBatchLimit << ","
 			<< c.nodeASeedEdges << ","
 			<< c.nodeBTasks << ","
 			<< c.nodeBSubdivideTasks << ","
@@ -923,6 +955,8 @@ public:
 			overlay->text("Q2 enq ok/CAS fail/full: %u / %u / %u", q2.enqueueSuccess, q2.enqueueCasFail, q2.enqueueFull);
 			overlay->text("Q2 deq ok/CAS fail/empty: %u / %u / %u", q2.dequeueSuccess, q2.dequeueCasFail, q2.dequeueEmpty);
 			overlay->text("Q2 high-water: %u", q2.highWater);
+			overlay->text("Q2 deq batches/slots/slots per batch: %u / %u / %.2f",
+				c.q2DequeueBatches, c.q2DequeueBatchSlots, ratio(c.q2DequeueBatchSlots, c.q2DequeueBatches));
 		}
 
 		if (overlay->header("Atomic pressure")) {
@@ -934,6 +968,8 @@ public:
 			overlay->text("Q2 ready CAS attempts/fail/max spin: %u / %u / %u", q2.readyCasAttempts, q2.readyCasFail, q2.readyMaxSpin);
 			overlay->text("Workgroups B/C: %u / %u", experiment.nodeCStart, NUM_WORKGROUPS - experiment.nodeCStart);
 			overlay->text("Q1 lane pop: %s", experiment.q1LanePop ? "on" : "off");
+			overlay->text("Q2 dequeue batching: %s", experiment.q2DequeueBatch ? "on" : "off");
+			overlay->text("Q2 dequeue batch limit: %u", experiment.q2DequeueBatchLimit);
 			overlay->text("Shader metrics: %s", metrics.shaderCountersEnabled ? "on" : "off");
 		}
 	}

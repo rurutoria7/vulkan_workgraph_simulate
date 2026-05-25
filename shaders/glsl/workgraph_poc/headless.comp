@@ -1,5 +1,8 @@
 #version 450
 
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_KHR_shader_subgroup_ballot : require
+
 layout(local_size_x = 32) in;
 
 #define MAX_QUEUE_SHARDS 256
@@ -25,6 +28,13 @@ struct QueueMetrics {
 struct DebugCounters {
     QueueMetrics q1Shards[MAX_QUEUE_SHARDS];
     QueueMetrics q2Shards[MAX_QUEUE_SHARDS];
+
+    uint q2DequeueBatches;
+    uint q2DequeueBatchSlots;
+    uint q2DequeueBatchCasAttempts;
+    uint q2DequeueBatchCasFail;
+    uint q2DequeueBatchEmpty;
+    uint q2DequeueBatchPartial;
 
     uint nodeASeedEdges;
     uint nodeBTasks;
@@ -58,6 +68,8 @@ layout (constant_id = 4) const uint ENABLE_SHADER_METRICS = 0u;
 layout (constant_id = 5) const uint Q1_QUEUE_SHARDS = 256u;
 layout (constant_id = 6) const uint Q2_QUEUE_SHARDS = 256u;
 layout (constant_id = 7) const uint ENABLE_Q1_LANE_POP = 1u;
+layout (constant_id = 8) const uint ENABLE_Q2_DEQUEUE_BATCH = 0u;
+layout (constant_id = 9) const uint Q2_DEQUEUE_BATCH_LIMIT = 32u;
 
 // payload[5] is a per-slot ready flag (0=empty, 1=ready)
 // All accesses use atomics for cross-CU visibility on RDNA 3
@@ -279,7 +291,112 @@ bool tryPopQ2Shard(uint shard, out uint p0, out uint p1, out uint p2, out uint p
     return false;
 }
 
+bool tryPopQ2BatchShard(uint shard, out uint slot) {
+    uint capacity = q2ShardCapacity();
+    const bool want = (control.stopFlag == 0u);
+    uvec4 wantMask = subgroupBallot(want);
+    uint requestCount = subgroupBallotBitCount(wantMask);
+    uint laneOffset = subgroupBallotExclusiveBitCount(wantMask);
+
+    uint reserved = 0u;
+    uint baseHead = 0u;
+    uint casAttempts = 0u;
+    uint casFails = 0u;
+    bool emptyBatch = false;
+    bool partialBatch = false;
+
+    if (subgroupElect() && requestCount > 0u) {
+        METRIC_ADD(control.metrics.q2DequeueBatches, 1u);
+        while (control.stopFlag == 0u) {
+            uint cur = atomicAdd(control.q2[shard].count, 0u);
+            if (cur == 0u) {
+                emptyBatch = true;
+                break;
+            }
+
+            uint claim = min(min(requestCount, cur), max(Q2_DEQUEUE_BATCH_LIMIT, 1u));
+            casAttempts++;
+            if (atomicCompSwap(control.q2[shard].count, cur, cur - claim) == cur) {
+                reserved = claim;
+                partialBatch = (claim < requestCount);
+                baseHead = atomicAdd(control.q2[shard].head, claim);
+                break;
+            }
+            casFails++;
+        }
+
+        METRIC_ADD(control.metrics.q2Shards[shard].dequeueAttempts, casAttempts);
+        METRIC_ADD(control.metrics.q2DequeueBatchCasAttempts, casAttempts);
+        METRIC_ADD(control.metrics.q2Shards[shard].dequeueCasFail, casFails);
+        METRIC_ADD(control.metrics.q2DequeueBatchCasFail, casFails);
+
+        if (reserved > 0u) {
+            METRIC_ADD(control.metrics.q2Shards[shard].dequeueSuccess, reserved);
+            METRIC_ADD(control.metrics.q2DequeueBatchSlots, reserved);
+        }
+        if (emptyBatch) {
+            METRIC_ADD(control.metrics.q2Shards[shard].dequeueEmpty, requestCount);
+            METRIC_ADD(control.metrics.q2DequeueBatchEmpty, 1u);
+        }
+        if (partialBatch) {
+            METRIC_ADD(control.metrics.q2DequeueBatchPartial, 1u);
+        }
+    }
+
+    reserved = subgroupBroadcastFirst(reserved);
+    baseHead = subgroupBroadcastFirst(baseHead);
+
+    if (want && laneOffset < reserved) {
+        uint localSlot = (baseHead + laneOffset) % capacity;
+        slot = shard * capacity + localSlot;
+        return true;
+    }
+    return false;
+}
+
+bool processQ2Slot(uint slot, out uint p0, out uint p1, out uint p2, out uint p3) {
+    uint capacity = q2ShardCapacity();
+    uint shard = slot / capacity;
+    uint readySpin = 0u;
+    while (atomicCompSwap(queue2.tasks[slot].payload[5], 1u, 0u) != 1u) {
+        readySpin++;
+        if (control.stopFlag != 0u) {
+            METRIC_ADD(control.metrics.q2Shards[shard].readyCasAttempts, readySpin);
+            METRIC_ADD(control.metrics.q2Shards[shard].readyCasFail, readySpin);
+            METRIC_MAX(control.metrics.q2Shards[shard].readyMaxSpin, readySpin);
+            return false;
+        }
+    }
+    METRIC_ADD(control.metrics.q2Shards[shard].readyCasAttempts, readySpin + 1u);
+    METRIC_ADD(control.metrics.q2Shards[shard].readyCasSuccess, 1u);
+    METRIC_ADD(control.metrics.q2Shards[shard].readyCasFail, readySpin);
+    METRIC_MAX(control.metrics.q2Shards[shard].readyMaxSpin, readySpin);
+
+    p0 = queue2.tasks[slot].payload[0];
+    p1 = queue2.tasks[slot].payload[1];
+    p2 = queue2.tasks[slot].payload[2];
+    p3 = queue2.tasks[slot].payload[3];
+    memoryBarrierBuffer();
+    return true;
+}
+
+bool popQ2Batch(uint wgId, out uint p0, out uint p1, out uint p2, out uint p3) {
+    uint homeShard = (wgId - NODE_C_START) % Q2_QUEUE_SHARDS;
+    for (uint i = 0u; i < Q2_QUEUE_SHARDS; i++) {
+        uint shard = (homeShard + i) % Q2_QUEUE_SHARDS;
+        uint slot = 0u;
+        if (tryPopQ2BatchShard(shard, slot)) {
+            return processQ2Slot(slot, p0, p1, p2, p3);
+        }
+    }
+    return false;
+}
+
 bool popQ2(uint wgId, uint localId, out uint p0, out uint p1, out uint p2, out uint p3) {
+    if (ENABLE_Q2_DEQUEUE_BATCH != 0u) {
+        return popQ2Batch(wgId, p0, p1, p2, p3);
+    }
+
     uint worker = (wgId - NODE_C_START) * gl_WorkGroupSize.x + localId;
     uint homeShard = worker % Q2_QUEUE_SHARDS;
     for (uint i = 0u; i < Q2_QUEUE_SHARDS; i++) {
