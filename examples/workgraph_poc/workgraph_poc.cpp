@@ -8,6 +8,25 @@
 #include <algorithm>
 #include <fstream>
 
+namespace {
+
+struct ScopedCmdLabel {
+	ScopedCmdLabel(VkCommandBuffer commandBuffer, const char* name, glm::vec4 color)
+		: commandBuffer(commandBuffer)
+	{
+		vks::debugutils::cmdBeginLabel(commandBuffer, name, color);
+	}
+
+	~ScopedCmdLabel()
+	{
+		vks::debugutils::cmdEndLabel(commandBuffer);
+	}
+
+	VkCommandBuffer commandBuffer;
+};
+
+}
+
 // Koch edge count is 3 * 4^depth. The shader receives the same values via
 // specialization constants; keep these defines in sync with headless.comp.
 #define MAX_DEPTH 8
@@ -799,55 +818,65 @@ public:
 		}
 		writeTimestamp(cmd, TimestampFrameStart, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT);
 
-		// --- Phase 1: GPU reset of control and queue buffers ---
-		vkCmdFillBuffer(cmd, compute.controlBuf, 0, sizeof(ControlBlock), 0);
-		vkCmdFillBuffer(cmd, compute.q1Buf, 0, sizeof(Task) * QUEUE_SIZE, 0);
-		vkCmdFillBuffer(cmd, compute.q2Buf, 0, sizeof(Task) * QUEUE_SIZE, 0);
+		{
+			ScopedCmdLabel label(cmd, "WG GPU reset", glm::vec4(0.95f, 0.66f, 0.18f, 1.0f));
+			vkCmdFillBuffer(cmd, compute.controlBuf, 0, sizeof(ControlBlock), 0);
+			vkCmdFillBuffer(cmd, compute.q1Buf, 0, sizeof(Task) * QUEUE_SIZE, 0);
+			vkCmdFillBuffer(cmd, compute.q2Buf, 0, sizeof(Task) * QUEUE_SIZE, 0);
+		}
 		writeTimestamp(cmd, TimestampAfterReset, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT);
 
-		VkMemoryBarrier fillBarrier = { VK_STRUCTURE_TYPE_MEMORY_BARRIER };
-		fillBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
-		fillBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
-		vkCmdPipelineBarrier(cmd,
-			VK_PIPELINE_STAGE_TRANSFER_BIT,
-			VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-			0, 1, &fillBarrier, 0, nullptr, 0, nullptr);
+		{
+			ScopedCmdLabel label(cmd, "WG reset-to-compute barrier", glm::vec4(0.52f, 0.74f, 0.95f, 1.0f));
+			VkMemoryBarrier fillBarrier = { VK_STRUCTURE_TYPE_MEMORY_BARRIER };
+			fillBarrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+			fillBarrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+			vkCmdPipelineBarrier(cmd,
+				VK_PIPELINE_STAGE_TRANSFER_BIT,
+				VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+				0, 1, &fillBarrier, 0, nullptr, 0, nullptr);
+		}
 		writeTimestamp(cmd, TimestampAfterResetBarrier, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT);
 
-		// --- Phase 2: Compute dispatch (persistent threads) ---
-		vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, compute.pipeline);
-		vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, compute.pipelineLayout, 0, 1, &compute.descriptorSet, 0, 0);
-		vkCmdDispatch(cmd, NUM_WORKGROUPS, 1, 1);
+		{
+			ScopedCmdLabel label(cmd, "WG compute dispatch", glm::vec4(0.27f, 0.82f, 0.55f, 1.0f));
+			vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, compute.pipeline);
+			vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, compute.pipelineLayout, 0, 1, &compute.descriptorSet, 0, 0);
+			vkCmdDispatch(cmd, NUM_WORKGROUPS, 1, 1);
+		}
 		writeTimestamp(cmd, TimestampAfterCompute, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT);
 
-		// --- Phase 3: Barrier compute writes for vertex input and metrics readback ---
-		std::array<VkBufferMemoryBarrier, 2> postComputeBarriers{};
-		postComputeBarriers[0].sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
-		postComputeBarriers[0].srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-		postComputeBarriers[0].dstAccessMask = VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT;
-		postComputeBarriers[0].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-		postComputeBarriers[0].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-		postComputeBarriers[0].buffer = vertexBuffer.buffer;
-		postComputeBarriers[0].offset = 0;
-		postComputeBarriers[0].size = VK_WHOLE_SIZE;
-		uint32_t postComputeBarrierCount = 1;
-		if (metrics.enabled) {
-			postComputeBarriers[1].sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
-			postComputeBarriers[1].srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
-			postComputeBarriers[1].dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
-			postComputeBarriers[1].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-			postComputeBarriers[1].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
-			postComputeBarriers[1].buffer = compute.controlBuf;
-			postComputeBarriers[1].offset = 0;
-			postComputeBarriers[1].size = sizeof(ControlBlock);
-			postComputeBarrierCount = 2;
+		{
+			ScopedCmdLabel label(cmd, "WG post-compute barrier", glm::vec4(0.46f, 0.62f, 0.96f, 1.0f));
+			std::array<VkBufferMemoryBarrier, 2> postComputeBarriers{};
+			postComputeBarriers[0].sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+			postComputeBarriers[0].srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+			postComputeBarriers[0].dstAccessMask = VK_ACCESS_VERTEX_ATTRIBUTE_READ_BIT;
+			postComputeBarriers[0].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+			postComputeBarriers[0].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+			postComputeBarriers[0].buffer = vertexBuffer.buffer;
+			postComputeBarriers[0].offset = 0;
+			postComputeBarriers[0].size = VK_WHOLE_SIZE;
+			uint32_t postComputeBarrierCount = 1;
+			if (metrics.enabled) {
+				postComputeBarriers[1].sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER;
+				postComputeBarriers[1].srcAccessMask = VK_ACCESS_SHADER_WRITE_BIT;
+				postComputeBarriers[1].dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+				postComputeBarriers[1].srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+				postComputeBarriers[1].dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+				postComputeBarriers[1].buffer = compute.controlBuf;
+				postComputeBarriers[1].offset = 0;
+				postComputeBarriers[1].size = sizeof(ControlBlock);
+				postComputeBarrierCount = 2;
+			}
+			vkCmdPipelineBarrier(cmd,
+				VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
+				metrics.enabled ? (VK_PIPELINE_STAGE_VERTEX_INPUT_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT) : VK_PIPELINE_STAGE_VERTEX_INPUT_BIT,
+				0, 0, nullptr, postComputeBarrierCount, postComputeBarriers.data(), 0, nullptr);
 		}
-		vkCmdPipelineBarrier(cmd,
-			VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT,
-			metrics.enabled ? (VK_PIPELINE_STAGE_VERTEX_INPUT_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT) : VK_PIPELINE_STAGE_VERTEX_INPUT_BIT,
-			0, 0, nullptr, postComputeBarrierCount, postComputeBarriers.data(), 0, nullptr);
 
 		if (metrics.enabled) {
+			ScopedCmdLabel label(cmd, "WG metrics copy", glm::vec4(0.84f, 0.53f, 0.94f, 1.0f));
 			VkBufferCopy metricsCopy = {};
 			metricsCopy.size = sizeof(ControlBlock);
 			vkCmdCopyBuffer(cmd, compute.controlBuf, metrics.readbackBuf[currentBuffer], 1, &metricsCopy);
@@ -867,36 +896,38 @@ public:
 		}
 		writeTimestamp(cmd, TimestampAfterMetricsCopy, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT);
 
-		// --- Phase 4: Render pass ---
-		VkClearValue clearValues[2]{};
-		clearValues[0].color = { { 0.05f, 0.05f, 0.05f, 1.0f } };
-		clearValues[1].depthStencil = { 1.0f, 0 };
+		{
+			ScopedCmdLabel label(cmd, "WG render", glm::vec4(0.95f, 0.46f, 0.36f, 1.0f));
+			VkClearValue clearValues[2]{};
+			clearValues[0].color = { { 0.05f, 0.05f, 0.05f, 1.0f } };
+			clearValues[1].depthStencil = { 1.0f, 0 };
 
-		VkRenderPassBeginInfo rpBegin = vks::initializers::renderPassBeginInfo();
-		rpBegin.renderPass = renderPass;
-		rpBegin.renderArea.extent.width = width;
-		rpBegin.renderArea.extent.height = height;
-		rpBegin.clearValueCount = 2;
-		rpBegin.pClearValues = clearValues;
-		rpBegin.framebuffer = frameBuffers[currentImageIndex];
+			VkRenderPassBeginInfo rpBegin = vks::initializers::renderPassBeginInfo();
+			rpBegin.renderPass = renderPass;
+			rpBegin.renderArea.extent.width = width;
+			rpBegin.renderArea.extent.height = height;
+			rpBegin.clearValueCount = 2;
+			rpBegin.pClearValues = clearValues;
+			rpBegin.framebuffer = frameBuffers[currentImageIndex];
 
-		vkCmdBeginRenderPass(cmd, &rpBegin, VK_SUBPASS_CONTENTS_INLINE);
+			vkCmdBeginRenderPass(cmd, &rpBegin, VK_SUBPASS_CONTENTS_INLINE);
 
-		VkViewport viewport = vks::initializers::viewport((float)width, (float)height, 0.0f, 1.0f);
-		vkCmdSetViewport(cmd, 0, 1, &viewport);
-		VkRect2D scissor = vks::initializers::rect2D(width, height, 0, 0);
-		vkCmdSetScissor(cmd, 0, 1, &scissor);
+			VkViewport viewport = vks::initializers::viewport((float)width, (float)height, 0.0f, 1.0f);
+			vkCmdSetViewport(cmd, 0, 1, &viewport);
+			VkRect2D scissor = vks::initializers::rect2D(width, height, 0, 0);
+			vkCmdSetScissor(cmd, 0, 1, &scissor);
 
-		vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, graphics.pipeline);
-		VkDeviceSize offsets[1] = { 0 };
-		vkCmdBindVertexBuffers(cmd, 0, 1, &vertexBuffer.buffer, offsets);
-		// Koch output count is deterministic for MAX_DEPTH, so no hot-path
-		// readback is needed before drawing.
-		vkCmdDraw(cmd, EXPECTED_VERTICES, 1, 0, 0);
+			vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, graphics.pipeline);
+			VkDeviceSize offsets[1] = { 0 };
+			vkCmdBindVertexBuffers(cmd, 0, 1, &vertexBuffer.buffer, offsets);
+			// Koch output count is deterministic for MAX_DEPTH, so no hot-path
+			// readback is needed before drawing.
+			vkCmdDraw(cmd, EXPECTED_VERTICES, 1, 0, 0);
 
-		drawUI(cmd);
+			drawUI(cmd);
 
-		vkCmdEndRenderPass(cmd);
+			vkCmdEndRenderPass(cmd);
+		}
 		writeTimestamp(cmd, TimestampAfterRender, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT);
 		VK_CHECK_RESULT(vkEndCommandBuffer(cmd));
 	}
