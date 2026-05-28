@@ -17,6 +17,12 @@ The report should include key screenshots and key data in the main text, and
 place complete data, screenshots, environment details, and commands in the
 appendix.
 
+Primary audience: internal / personal technical review. The report can be more
+detailed than an external executive summary and may include the May 2026 RGP
+evidence chain in the main text when it helps explain why the new cross-vendor
+experiment was designed. Still keep old evidence and newly captured evidence
+clearly labeled.
+
 ## Device Selection Rule
 
 Use `--gpu 0` for all standard profiling and timing commands unless a machine's
