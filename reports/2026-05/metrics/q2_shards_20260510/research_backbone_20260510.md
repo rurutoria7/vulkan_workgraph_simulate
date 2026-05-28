@@ -302,7 +302,11 @@ Main worktree confirmation:
   explicitly running the RX 7900 XTX as `--gpu 0`, but follow-up controlled
   runs showed `--gpu 0` is not a deterministic recovery switch. Treat this as
   an AMD driver / GPU performance-state / timing-state measurement problem
-  unless a lower-level driver trace proves otherwise.
+  unless a lower-level driver trace proves otherwise. ADL PMLog follow-up
+  showed the current slow default path running around `1.45-1.50 GHz` GFXCLK
+  with no throttle flags, while the unsharded scalar path can drive the same
+  RX 7900 XTX to about `3.17 GHz`; see the perf inconsistency report for the
+  raw sensor/timing CSVs.
 - The `~40 ms` baseline is the scalar-Q1 baseline, not the old Q1-batched
   `~30 ms` baseline. Do not compare those two as the same configuration.
 

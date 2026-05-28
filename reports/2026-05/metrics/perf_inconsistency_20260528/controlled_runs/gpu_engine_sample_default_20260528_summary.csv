@@ -1,0 +1,2 @@
+"run","exit_code","pid","metric_frames","median_compute_ms","p05_compute_ms","p95_compute_ms","engine_sample_rows","metrics_file","samples_file"
+"gpu_engine_sample_default_20260528",,"25788","598","1.869","1.4196","1.929","38","reports\2026-05\metrics\perf_inconsistency_20260528\controlled_runs\raw_gpu_engine_sample_default_20260528.csv","reports\2026-05\metrics\perf_inconsistency_20260528\controlled_runs\gpu_engine_sample_default_20260528_engine_samples.csv"
