@@ -298,10 +298,11 @@ Main worktree confirmation:
   baseline timing. This was investigated in
   `reports/2026-05/metrics/perf_inconsistency_20260528/perf_inconsistency_findings.md`.
 - The high-shard `~1.9 ms` case reproduced on both current HEAD and old
-  optimized commit `5e57e873`, then returned to `~1.0 ms` after explicitly
-  running the RX 7900 XTX as `--gpu 0`. Treat this as an AMD driver /
-  switchable-graphics / GPU performance-state measurement problem unless a
-  lower-level driver trace proves otherwise.
+  optimized commit `5e57e873`. One sequence returned to `~1.0 ms` after
+  explicitly running the RX 7900 XTX as `--gpu 0`, but follow-up controlled
+  runs showed `--gpu 0` is not a deterministic recovery switch. Treat this as
+  an AMD driver / GPU performance-state / timing-state measurement problem
+  unless a lower-level driver trace proves otherwise.
 - The `~40 ms` baseline is the scalar-Q1 baseline, not the old Q1-batched
   `~30 ms` baseline. Do not compare those two as the same configuration.
 

@@ -1,0 +1,4 @@
+"name","exit_code","frames","median_compute_ms","p05_compute_ms","p95_compute_ms","first10_median_ms","last10_median_ms","min_compute_ms","max_compute_ms","median_reset_ms","median_render_ms","elapsed_sec","metrics_file"
+"after_tools_closed_default_r1","0","148","1.8984","1.6116","1.9408","1.9101","1.9124","1.4173","1.9854","0.0094","0.0362","1.021","reports\2026-05\metrics\perf_inconsistency_20260528\controlled_runs\raw_after_tools_closed_default_r1.csv"
+"after_tools_closed_default_r2","0","148","1.9048","1.569","2.5026","2.5024","1.9107","1.0907","2.5971","0.009","0.0322","2.022","reports\2026-05\metrics\perf_inconsistency_20260528\controlled_runs\raw_after_tools_closed_default_r2.csv"
+"after_tools_closed_default_r3","0","148","1.9033","1.4838","1.951","1.9086","1.7632","1.3465","1.9748","0.0094","0.0362","1.018","reports\2026-05\metrics\perf_inconsistency_20260528\controlled_runs\raw_after_tools_closed_default_r3.csv"

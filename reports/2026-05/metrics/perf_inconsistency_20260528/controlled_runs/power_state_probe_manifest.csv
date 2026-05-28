@@ -1,0 +1,5 @@
+"name","exit_code","requested_frames","frames","median_compute_ms","p05_compute_ms","p95_compute_ms","first10_median_ms","last10_median_ms","min_compute_ms","max_compute_ms","edges","args","elapsed_sec"
+"default_before_heavy","0","120","118","1.9044","1.4582","1.9476","1.9092","1.8242","1.2997","1.9611","196608","","1.017"
+"heavy_unsharded_scalar_30f","0","30","28","43.1857","41.9691","44.5246","43.748","42.6906","41.6585","46.7774","196608","--wg-queue-shards 1 --wg-q2-shards 1 --wg-no-q1-lane-pop --wg-no-q2-deq-batch","2.026"
+"default_after_heavy_immediate","0","120","118","1.8888","1.3097","1.9434","1.662","1.9032","1.0992","2.5168","196608","","1.017"
+"default_after_heavy_5s","0","120","118","1.8926","1.5704","1.9401","1.8988","1.7234","1.4245","1.9604","196608","","1.019"

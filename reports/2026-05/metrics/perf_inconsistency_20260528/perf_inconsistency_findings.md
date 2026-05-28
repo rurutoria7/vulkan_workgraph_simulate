@@ -10,10 +10,10 @@
 
 分開看有兩個原因：
 
-1. `best 0.99 ms -> 1.9 ms` 是目前 AMD/Vulkan 執行狀態不穩定造成的量測狀態差異，不是程式碼差異。用同一個舊版 optimized commit `5e57e873` 和目前 HEAD 都能在同一慢狀態下重現約 `1.9 ms`；之後明確用 `--gpu 0` 跑 RX 7900 XTX，best 立刻回到約 `1.00 ms`，後續 default run 也維持約 `1.00 ms`。
+1. `best 0.99 ms -> 1.9 ms` 是目前 AMD/Vulkan 執行狀態不穩定造成的量測狀態差異，不是程式碼差異。用同一個舊版 optimized commit `5e57e873` 和目前 HEAD 都能在同一慢狀態下重現約 `1.9 ms`；第一次調查中，明確用 `--gpu 0` 跑 RX 7900 XTX 後，best 立刻回到約 `1.00 ms`，後續 default run 也維持約 `1.00 ms`。後續重測顯示 `--gpu 0` 不是穩定的修復開關，只能說那一次剛好和外部 GPU/driver 狀態切換同時發生。
 2. `baseline 30 ms -> 40 ms` 是比較了不同 baseline。`30 ms` 來自舊 `fix-wave-batched-atomics` worktree 的 Q1 dequeue batching (`--wg-q1-deq-batch --wg-no-q2-deq-batch`)；`40 ms` 是 scalar Q1 baseline (`--wg-no-q1-deq-batch`) 或 current main 的 unsharded scalar path。這兩者不是同一設定。
 
-目前已知的內部 driver 機制仍未知；證據只支持把它標成 AMD driver / switchable graphics / GPU performance state 類問題，而不是 shader bottleneck 結論。
+目前已知的內部 driver 機制仍未知；證據只支持把它標成 AMD driver / GPU performance state / timing state 類問題，而不是 shader bottleneck 結論。AMD switchable graphics layer、Steam/RenderDoc implicit layer、雙 AMD GPU 枚舉本身，目前都沒有被證成是充分原因。
 
 ## 環境觀察
 
@@ -46,6 +46,54 @@
 | `fix-wave-batched-atomics` | scalar Q1 off / Q2 off | `39.2028 ms` |
 | `fix-wave-batched-atomics` | Q1 batch on / Q2 off | `30.9417 ms` |
 
+## 2026-05-28 follow-up：`--gpu 0` 不是穩定修復
+
+新增受控重跑資料放在 `reports/2026-05/metrics/perf_inconsistency_20260528/controlled_runs/`。
+
+| Case | 控制變因 | Median compute | 判讀 |
+| --- | --- | ---: | --- |
+| `slow_default_pre1` | default | `1.8744 ms` | 慢狀態仍可重現 |
+| `slow_default_pre2` | default | `1.9014 ms` | 慢狀態穩定 |
+| `explicit_gpu0` | 加 `--gpu 0` | `1.9106 ms` | 這次沒有恢復到 `~1.0 ms` |
+| `default_post_gpu0` | `--gpu 0` 後再跑 default | `1.8620 ms` | 後續 default 也沒有恢復 |
+| `disable_nonamd_layers` | 停用 Steam overlay/fossilize 與 RenderDoc capture env | `1.8738 ms` | 非 AMD implicit layers 不是充分原因 |
+| `disable_all_known_implicit` | 停用已知 AMD/Steam/RenderDoc layer env | `1.8845 ms` | 未恢復 |
+| `loader_disable_implicit` | `VK_LOADER_LAYERS_DISABLE=~implicit~` | `2.4938 ms` | 未恢復，且前段更慢 |
+| `loader_filter_dgpu_744c` | `VK_LOADER_DEVICE_ID_FILTER=0x744c` | `2.4923 ms` | 只篩 dGPU 仍未恢復 |
+| `vk_driver_files_dgpu_json` | `VK_DRIVER_FILES=<RX 7900 XTX amd-vulkan64.json>` | `1.8776 ms` | 指定 dGPU ICD 仍未恢復 |
+| `vk_icd_filenames_dgpu_json` | `VK_ICD_FILENAMES=<RX 7900 XTX amd-vulkan64.json>` | `1.9092 ms` | 指定 dGPU ICD 仍未恢復 |
+| `vk_driver_files_igpu_json` | 指定 iGPU ICD | failed | iGPU path 不能作為可比較結果 |
+
+這輪重要修正：第一次看到 `--gpu 0` 後恢復，不能解讀成 default 和 `--gpu 0` 走了不同 shader 或不同裝置。程式碼上 default 已選 device index 0；後續受控重跑也證明 `--gpu 0` 不會穩定讓 `1.9 ms` 變回 `1.0 ms`。
+
+## 外部程序檢查
+
+Vulkan loader 環境：
+
+- `VK_LAYER_AMD_switchable_graphics` 有兩份 manifest，loader 會移除 duplicate。
+- Epic EOS overlay registry 指到不存在的 JSON，loader 會報 failed-to-open，但停用 implicit layer 後沒有回到 fast。
+- Steam overlay/fossilize、RenderDoc capture layer 的停用測試沒有回到 fast。
+
+Vanguard / Parsec 檢查：
+
+| Case | 狀態 | Default median compute |
+| --- | --- | ---: |
+| `after_tools_closed_default_r1` | `vgk`/`vgc` stopped；Parsec service still running | `1.8984 ms` |
+| `after_tools_closed_default_r2` | same | `1.9048 ms` |
+| `after_tools_closed_default_r3` | same | `1.9033 ms` |
+
+Vanguard 目前不是可觀察到的充分原因，因為 `vgk` kernel driver 與 `vgc` service 都是 stopped 後，default 還是 `~1.90 ms`。Parsec 還沒有完全排除，因為前台 app 關掉後，`Parsec` service 仍在跑，PID `6532`，image `C:\Program Files\Parsec\pservice.exe`。要完整排除 Parsec，需要在不依賴 Parsec 遠端連線的前提下停掉該 service 後再重跑同一組 default preflight。
+
+## 目前狀態模型
+
+目前觀察到至少三個 timing band：
+
+- fast band：`~1.00 ms`，歷史 clean run 與第一次 `--gpu 0` 後出現。
+- slow steady band：`~1.86-1.91 ms`，目前 most runs。
+- cold/transition band：部分 run 前段出現 `~2.45-2.55 ms`，幾十 frame 後回到 `~1.9 ms`。
+
+這種 banding 同時影響 compute、reset、barrier、render timestamp，比較符合 GPU/driver performance state 或 timestamp/timing state；但「普通 heavy workload 會把它拉回 fast」尚未被驗證。已做過 unsharded scalar heavy run、hidden/minimized `vkcube` background load，default 都沒有穩定回到 `~1.0 ms`。
+
 歷史 CSV 也支持同一判斷：
 
 | Historical file | Median compute | Reset median | Reset barrier median | Render median |
@@ -57,8 +105,8 @@
 
 ## 建議量測規則
 
-1. 之後所有可比較的 clean timing command 都明確加 `--gpu 0 --wg-timestamps-only`。
+1. 之後所有可比較的 clean timing command 都明確加 `--gpu 0 --wg-timestamps-only`，但不要把 `--gpu 0` 當成狀態修復手段。
 2. run manifest 記錄 GPU index、Vulkan driverInfo、Windows display driver、timestampPeriod。
 3. 每輪 sweep 前先跑一個 default 256-shard preflight；若 median 大於 `1.2 ms`，標記為 invalid state，不要把後續結果寫進結論。
 4. baseline 報告必須標明是哪個 baseline：current scalar baseline 約 `40 ms`，舊 Q1-batched baseline 約 `31 ms`，兩者不可混用。
-
+5. 若要完整排除 Parsec，先確認不是透過 Parsec 遠端操作，再停 `Parsec` service，重跑三次 default preflight；若 median 仍在 `~1.9 ms`，Parsec 可降級為非充分原因。

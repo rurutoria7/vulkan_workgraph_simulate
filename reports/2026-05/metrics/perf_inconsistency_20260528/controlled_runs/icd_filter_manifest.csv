@@ -1,0 +1,6 @@
+"name","exit_code","frames","median_compute_ms","p05_compute_ms","p95_compute_ms","first10_median_ms","last10_median_ms","edges","env","elapsed_sec"
+"default_before_icd","0","118","1.8965","1.4315","1.944","1.9094","1.7756","196608","","1.022"
+"vk_driver_files_dgpu_json","0","118","1.8776","1.1846","1.935","1.1987","1.9134","196608","VK_DRIVER_FILES=C:\WINDOWS\System32\DriverStore\FileRepository\amdvlk.inf_amd64_9f009a63c54e26dc\amd-vulkan64.json","1.023"
+"vk_icd_filenames_dgpu_json","0","118","1.9092","1.5735","2.5052","2.4986","1.9138","196608","VK_ICD_FILENAMES=C:\WINDOWS\System32\DriverStore\FileRepository\amdvlk.inf_amd64_9f009a63c54e26dc\amd-vulkan64.json","1.021"
+"vk_driver_files_igpu_json","-1",,"0","0","0","0","0","0","VK_DRIVER_FILES=C:\WINDOWS\System32\DriverStore\FileRepository\u0200690.inf_amd64_68df361886f7d87c\B026020\amd-vulkan64.json","5.049"
+"default_after_icd","0","118","1.8921","1.861","1.9348","1.891","1.8826","196608","","1.01"

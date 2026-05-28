@@ -1,0 +1,4 @@
+"name","exit_code","frames","median_compute_ms","p05_compute_ms","p95_compute_ms","first10_median_ms","last10_median_ms"
+"default_before_minimized_vkcube","0","118","1.9142","1.6847","1.9635","1.9192","1.9298"
+"default_during_minimized_vkcube","0","118","1.8896","1.859","1.9318","1.8828","1.8963"
+"default_after_minimized_vkcube","0","118","1.9012","1.4948","1.9419","1.9222","1.908"
