@@ -305,8 +305,10 @@ Main worktree confirmation:
   unless a lower-level driver trace proves otherwise. ADL PMLog follow-up
   showed the current slow default path running around `1.45-1.50 GHz` GFXCLK
   with no throttle flags, while the unsharded scalar path can drive the same
-  RX 7900 XTX to about `3.17 GHz`; see the perf inconsistency report for the
-  raw sensor/timing CSVs.
+  RX 7900 XTX to about `3.17 GHz`. A concurrent long-anchor run kept GFXCLK at
+  about `3.16 GHz` and the default path returned to `1.003 ms`, matching the
+  historical fast band; see the perf inconsistency report for the raw
+  sensor/timing CSVs.
 - The `~40 ms` baseline is the scalar-Q1 baseline, not the old Q1-batched
   `~30 ms` baseline. Do not compare those two as the same configuration.
 

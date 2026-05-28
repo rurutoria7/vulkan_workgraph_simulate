@@ -13,7 +13,7 @@
 1. `best 0.99 ms -> 1.9 ms` 是目前 AMD/Vulkan 執行狀態不穩定造成的量測狀態差異，不是程式碼差異。用同一個舊版 optimized commit `5e57e873` 和目前 HEAD 都能在同一慢狀態下重現約 `1.9 ms`；第一次調查中，明確用 `--gpu 0` 跑 RX 7900 XTX 後，best 立刻回到約 `1.00 ms`，後續 default run 也維持約 `1.00 ms`。後續重測顯示 `--gpu 0` 不是穩定的修復開關，只能說那一次剛好和外部 GPU/driver 狀態切換同時發生。
 2. `baseline 30 ms -> 40 ms` 是比較了不同 baseline。`30 ms` 來自舊 `fix-wave-batched-atomics` worktree 的 Q1 dequeue batching (`--wg-q1-deq-batch --wg-no-q2-deq-batch`)；`40 ms` 是 scalar Q1 baseline (`--wg-no-q1-deq-batch`) 或 current main 的 unsharded scalar path。這兩者不是同一設定。
 
-目前已知的內部 driver 決策機制仍未知；但後續 ADL PMLog 取樣已把慢狀態收斂到 RX 7900 XTX 的 GFX clock / DVFS state。optimized default path 在目前慢狀態下只跑在約 `1.45-1.50 GHz`，沒有 throttle flag；unsharded scalar path 可以把同一張卡拉到約 `3.17 GHz`，證明不是全域 power cap 或溫度 throttling。AMD switchable graphics layer、Steam/RenderDoc implicit layer、雙 AMD GPU 枚舉本身，目前都沒有被證成是充分原因。
+目前已知的內部 driver 決策機制仍未知；但後續 ADL PMLog 取樣已把慢狀態收斂到 RX 7900 XTX 的 GFX clock / DVFS state。optimized default path 在目前慢狀態下只跑在約 `1.45-1.50 GHz`，沒有 throttle flag；用 concurrent unsharded scalar anchor 把同一張卡維持在約 `3.16 GHz` 時，同一個 default timing 回到 `1.003 ms`。因此 `~1.9 ms` vs `~1.0 ms` 的主因是 GPU clock state，而不是 shader/code regression。AMD switchable graphics layer、Steam/RenderDoc implicit layer、雙 AMD GPU 枚舉本身，目前都沒有被證成是充分原因。
 
 ## 環境觀察
 
@@ -97,13 +97,15 @@ ADL adapter mapping 顯示 RX 7900 XTX 是 `adapterIndex=5`，`PNPString` 為 `P
 | `adl_gears_then_workgraph_20260528` / workgraph after gears | `1.9033 ms` | `1469 MHz` | `37%` | `33 W` | `0` |
 | `adl_pmlog_unsharded_scalar_120f_20260528` | `43.2102 ms` | `3166 MHz` | `100%` | `150 W` | `0` |
 | `adl_pmlog_default_after_unsharded_600f_20260528` | `1.9076 ms` | `1497 MHz` | `46%` | `35 W` | `0` |
+| `adl_concurrent_long_anchor_short_default_20260528` default while anchor alive | `1.0030 ms` | `3162 MHz` | `100%` | `156 W` | `0` |
 
 判讀：
 
 - `~1.9 ms` slow band 對應到 optimized default workload 期間的 `~1.45-1.50 GHz` GFXCLK。
 - 同一張 RX 7900 XTX 可以在 unsharded scalar workload 下升到 `~3.17 GHz`、`100%` activity、`~150 W`，所以目前慢狀態不是全域時脈上限、溫度保護或供電保護。
 - 高 clock 不會自動延續到 optimized default path：unsharded scalar 結束後立刻跑 default，GFXCLK 仍掉回 `~1.5 GHz`，compute 仍是 `~1.91 ms`。
-- 目前還沒有同時捕捉到 `~1.0 ms` fast band 的 ADL sensor；因此「fast band 應該是 higher GFXCLK band」是由 `1.9x` duration ratio 與目前 clock 證據支持的推論，不是直接量到的 fast-band trace。
+- concurrent anchor 全程存活時，default 的 median compute 從 `~1.9 ms` 回到 `1.0030 ms`，同時 GFXCLK median 是 `3162 MHz`。這是目前最直接的因果驗證：同一 default path 在高 GFXCLK band 會回到歷史 fast band。
+- 第一個 concurrent anchor run 因 anchor 在 default 結束前自然結束，default median 仍是 `1.8826 ms`，但 p05 已到 `0.9922 ms`。因此只把 long-anchor/short-default run 當作乾淨因果證據。
 
 ## 目前狀態模型
 
@@ -113,7 +115,7 @@ ADL adapter mapping 顯示 RX 7900 XTX 是 `adapterIndex=5`，`PNPString` 為 `P
 - slow steady band：`~1.86-1.91 ms`，目前 most runs。
 - cold/transition band：部分 run 前段出現 `~2.45-2.55 ms`，幾十 frame 後回到 `~1.9 ms`。
 
-這種 banding 同時影響 compute、reset、barrier、render timestamp，比較符合 GPU/driver performance state 或 timestamp/timing state。ADL PMLog 進一步顯示目前 slow band 的直接伴隨條件是 optimized default path 被 driver 放在 `~1.5 GHz` GFXCLK band。已做過 unsharded scalar heavy run、4K `gears`、hidden/minimized `vkcube` background load；它們都沒有讓後續 default 穩定回到 `~1.0 ms`。
+這種 banding 同時影響 compute、reset、barrier、render timestamp，比較符合 GPU/driver performance state 或 timestamp/timing state。ADL PMLog 進一步顯示目前 slow band 的直接伴隨條件是 optimized default path 被 driver 放在 `~1.5 GHz` GFXCLK band；當 concurrent anchor 把 GFXCLK 維持在 `~3.16 GHz` 時，default 回到 `~1.0 ms`。已做過 unsharded scalar heavy run、4K `gears`、hidden/minimized `vkcube` background load；這些 pre-run/background graphics load 不會讓後續 default 自動穩定維持 fast band。
 
 歷史 CSV 也支持同一判斷：
 
@@ -131,4 +133,4 @@ ADL adapter mapping 顯示 RX 7900 XTX 是 `adapterIndex=5`，`PNPString` 為 `P
 3. 每輪 sweep 前先跑一個 default 256-shard preflight；若 median 大於 `1.2 ms`，標記為 invalid state，不要把後續結果寫進結論。
 4. baseline 報告必須標明是哪個 baseline：current scalar baseline 約 `40 ms`，舊 Q1-batched baseline 約 `31 ms`，兩者不可混用。
 5. 若要完整排除 Parsec，先確認不是透過 Parsec 遠端操作，再停 `Parsec` service，重跑三次 default preflight；若 median 仍在 `~1.9 ms`，Parsec 可降級為非充分原因。
-6. 若 fast band 再出現，立刻用 ADL PMLog 同步取樣；只有同時捕捉 `~1.0 ms` timing 與 GFXCLK，才能把 fast-band clock 從推論提升成直接證據。
+6. 若要比較 shader optimization，先用 default preflight 判定目前 clock band；`~1.9 ms` 和 `~1.0 ms` 不能混在同一張 optimization 表內。需要 clock-normalized 結果時，另開明確標記的 high-clock anchored run。
