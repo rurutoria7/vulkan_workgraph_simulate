@@ -1,0 +1,10 @@
+metric,value
+axis_end_ms,55.000000
+cs_nonzero_start_ms,0.666300
+cs_nonzero_end_ms,6.511564
+cs_nonzero_span_ms,5.845264
+event_span_start_ms,0.757159
+event_span_end_ms,55.000000
+event_span_ms,54.242841
+visible_zero_after_cs_ms,48.488436
+cs_visible_ratio_pct,10.776103

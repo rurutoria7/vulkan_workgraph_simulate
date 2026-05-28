@@ -29,10 +29,14 @@ Use `--gpu 0` for all standard profiling and timing commands unless a machine's
 `--listgpus` output proves that the intended discrete GPU is at another Vulkan
 device index.
 
-This is mandatory for the local AMD machine because omitting the explicit GPU
-selection can change the optimized-path timing away from the previously measured
-`~1 ms` range. Each artifact set must include evidence of the Vulkan device
-index and device name used for the run.
+This is a device-selection control, not a timing fix. The local AMD machine
+enumerates `GPU0` as `AMD Radeon RX 7900 XTX` and `GPU1` as integrated AMD
+graphics. Each artifact set must include evidence of the Vulkan device index and
+device name used for the run.
+
+When running a packaged binary on another machine, also pass
+`--resourcepath <package-root>` so SaschaWillems' compiled absolute asset and
+shader paths do not point back to the original AMD checkout path.
 
 ## Main Claim
 
@@ -57,6 +61,7 @@ Candidate settings:
 
 ```text
 --gpu 0
+--resourcepath <repo-or-package-root>
 --wg-timestamps-only
 --wg-queue-shards 1
 --wg-q2-shards 1
@@ -82,6 +87,7 @@ Candidate settings:
 
 ```text
 --gpu 0
+--resourcepath <repo-or-package-root>
 --wg-timestamps-only
 --wg-queue-shards 256
 --wg-q2-shards 256

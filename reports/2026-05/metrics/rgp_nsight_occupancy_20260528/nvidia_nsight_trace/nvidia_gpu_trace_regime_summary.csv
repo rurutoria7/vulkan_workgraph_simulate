@@ -1,0 +1,6 @@
+event_text,time_ms,FE_A.TriageA.gpu__engine_cycles_active_gr_or_ce.avg.pct_of_peak_sustained_elapsed,HUB.TriageA.gr__dispatch_cycles_active_queue_sync.avg.pct_of_peak_sustained_elapsed,SM.TriageA.sm__throughput.avg.pct_of_peak_sustained_elapsed,TPC.TriageA.tpc__warps_active_shader_cs_realtime.avg.pct_of_peak_sustained_elapsed,TPC.TriageA.tpc__warps_active_shader_cs_realtime.avg.per_cycle_elapsed,TPC.TriageA.tpc__warps_inactive_sm_active_realtime.avg.pct_of_peak_sustained_elapsed,LTS.TriageA.lts__throughput.avg.pct_of_peak_sustained_elapsed,FBPA.TriageA.dramc__throughput.avg.pct_of_peak_sustained_elapsed,PCI.TriageA.pcie__throughput.avg.pct_of_peak_sustained_elapsed
+WG GPU reset,0.021344,100,90.1672,3.82251,42.0123,26.8879,11.6604,23.6624,71.1391,9.71803
+WG reset-to-compute barrier,0.000704,100,30.863,0,81.8533,52.3861,0,25.6074,3.13515,10.3082
+WG compute dispatch,86.7386,99.996,99.9822,0,6.5189,4.1721,0,4.00176,0.20817,9.44388
+WG post-compute barrier,0.000896,100,0,0,0,0,0,6.2024,3.81059,8.99724
+WG render,0.047424,100,0,0,0,0,0,25.5174,23.241,9.6137

@@ -1,0 +1,7 @@
+"machine","case","run_type","repeat","frames","compute_median_ms","compute_p10_ms","compute_p90_ms","compute_min_ms","compute_max_ms","edges_min","vertices_min"
+"nvidia","problem_reproduction","timing","1","181","65.0813","63.9152","66.5209","63.0268","85.5384","196608","393216"
+"nvidia","optimized_main_path","timing","1","400","2.5827","2.2395","2.6731","2.2179","3.0843","196608","393216"
+"nvidia","problem_reproduction","timing","2","179","66.3027","65.3143","68.0571","64.4552","88.0249","196608","393216"
+"nvidia","optimized_main_path","timing","2","397","2.5904","2.2385","2.6767","2.22","3.0668","196608","393216"
+"nvidia","problem_reproduction","timing","3","180","66.5939","65.3906","68.1856","64.693","87.7331","196608","393216"
+"nvidia","optimized_main_path","timing","3","399","2.5799","2.2506","2.7496","2.2303","3.2892","196608","393216"

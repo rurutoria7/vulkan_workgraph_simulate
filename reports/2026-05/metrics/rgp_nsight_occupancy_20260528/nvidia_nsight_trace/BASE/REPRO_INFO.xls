@@ -1,0 +1,39 @@
+Computer Name	DESKTOP-VFA2S2A
+Operating System	Windows 11 (25H2)
+Operating System Build	10.0.26200
+Processor	Intel(R) Core(TM) i7-9700K CPU @ 3.60GHz
+RAM Usage	13557 MiB / 32682 MiB (41.5%)
+Device Name	NVIDIA GeForce RTX 2080
+Chip Name	TU104
+Driver Version	591.86
+Hardware Scheduling	Enabled
+VRAM Requested	22 MiB / 7219 MiB (0.3%)
+VRAM Committed	28 MiB / 7219 MiB (0.4%)
+VRAM Bytes Demoted	0 MiB
+Product Version	2026.2.0.0 (build 37991608) (public-release)
+Process File Name	C:\Users\Public\CodexWorkgraph\workgraph_vulkan_poc_run\build\bin\Release\workgraph_poc.exe
+Command Line	"C:\Users\Public\CodexWorkgraph\workgraph_vulkan_poc_run\build\bin\Release\workgraph_poc.exe" --resourcepath C:\Users\Public\CodexWorkgraph\workgraph_vulkan_poc_run --gpu 0 --benchmark --benchwarmup 0 --benchmarkframes 60 --width 640 --height 480 --wg-no-metrics --wg-queue-shards 1 --wg-q2-shards 1 --wg-node-c-start 72 --wg-no-q1-lane-pop --wg-no-q2-deq-batch
+API	Vulkan
+Troubleshooting Collection Controls	API Timestamps, metrics, sampling oldest, instrumented, CB timestamps, FECS, warp state sampling control=31
+Start After	2 Frames
+Max Duration 	2000 ms
+Limited To	1 Frames
+Allocated Event Buffer Memory (kB)	20000
+Allocated Timestamps	100000
+V-Sync Mode	Enforced Off
+GPU Clocks	Locked to Base
+Force Repaint	No
+Force D3D12 Background Optimizations	No
+Max Vulkan SC Internal CBs per Queue	24
+Max Vulkan SC Internal CB Memory (kB)	16
+Collect Screenshot	Yes
+Time Every Action	No
+Trace Shader Bindings	Yes
+Collect Shader Pipelines	Yes
+Collect External Shader Debug Info	Yes
+Warp State Sampling Interval	N/A (Warp State Sampling Disabled)
+Enable NVTX Ranges	Yes
+Recompile Cached Vulkan Shader Modules	Yes
+Metric Set	Throughput Metrics
+Real-Time Shader Profiler	Disabled
+Multi-Pass Metrics	Disabled

@@ -1,0 +1,6 @@
+event_text	time_ms
+WG GPU reset	0.021344
+WG reset-to-compute barrier	0.000704
+WG compute dispatch	86.7386
+WG post-compute barrier	0.000896
+WG render	0.047424

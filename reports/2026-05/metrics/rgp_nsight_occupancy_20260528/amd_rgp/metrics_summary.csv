@@ -1,0 +1,7 @@
+"machine","case","run_type","repeat","frames","compute_median_ms","compute_p10_ms","compute_p90_ms","compute_min_ms","compute_max_ms","edges_min","vertices_min"
+"amd","problem_reproduction","timing","1","195","43.1116","42.3838","44.2256","41.8036","56.0604","196608","393216"
+"amd","optimized_main_path","timing","1","613","1.894","1.4771","1.9383","0.9812","2.5845","196608","393216"
+"amd","problem_reproduction","timing","2","195","43.2306","42.3808","44.1568","41.4996","48.3182","196608","393216"
+"amd","optimized_main_path","timing","2","589","1.8994","1.5863","1.9475","1.2152","2.5604","196608","393216"
+"amd","problem_reproduction","timing","3","195","43.2338","42.3944","44.3946","41.6402","48.9174","196608","393216"
+"amd","optimized_main_path","timing","3","438","1.8792","1.3661","1.9186","1.0428","2.5241","196608","393216"
