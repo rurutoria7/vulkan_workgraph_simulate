@@ -17,6 +17,17 @@ The report should include key screenshots and key data in the main text, and
 place complete data, screenshots, environment details, and commands in the
 appendix.
 
+## Device Selection Rule
+
+Use `--gpu 0` for all standard profiling and timing commands unless a machine's
+`--listgpus` output proves that the intended discrete GPU is at another Vulkan
+device index.
+
+This is mandatory for the local AMD machine because omitting the explicit GPU
+selection can change the optimized-path timing away from the previously measured
+`~1 ms` range. Each artifact set must include evidence of the Vulkan device
+index and device name used for the run.
+
 ## Main Claim
 
 The report should avoid the broad claim "RDP / RGP is inaccurate." The scoped
@@ -39,6 +50,7 @@ but Wavefront occupancy shows the middle / tail region as zero.
 Candidate settings:
 
 ```text
+--gpu 0
 --wg-timestamps-only
 --wg-queue-shards 1
 --wg-q2-shards 1
@@ -63,6 +75,7 @@ Purpose: compare the currently adopted main path on both tools and GPUs.
 Candidate settings:
 
 ```text
+--gpu 0
 --wg-timestamps-only
 --wg-queue-shards 256
 --wg-q2-shards 256
@@ -98,7 +111,9 @@ For each GPU / tool / workload:
 
 - Exact executable path and command line.
 - Git commit and branch.
-- GPU name, driver version, OS version.
+- Vulkan device index, GPU name, driver version, OS version.
+- `--listgpus` output or an equivalent profiler / app screenshot proving the
+  selected GPU.
 - App CSV from `--wg-metrics-file` or captured `WG_METRICS` stdout.
 - Profiler capture file when practical.
 - Timeline screenshot showing labeled compute dispatch.
@@ -155,4 +170,3 @@ reports/2026-05/metrics/rgp_nsight_occupancy_20260528/scripts/
 2. `AMD capture data`
 3. `NVIDIA capture data`
 4. `analysis report`
-
