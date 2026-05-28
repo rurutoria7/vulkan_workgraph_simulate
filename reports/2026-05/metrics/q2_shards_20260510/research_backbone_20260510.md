@@ -292,6 +292,19 @@ Main worktree confirmation:
 | repeat 3 | `0.9906 ms` | `0.9810 ms` | `1.0046 ms` | `0.9593 ms` |
 | repeat 4 | `0.9902 ms` | `0.9806 ms` | `1.0042 ms` | `0.9615 ms` |
 
+2026-05-28 measurement stability note:
+
+- A later rerun showed apparent `~1.9 ms` high-shard timing and `~40 ms`
+  baseline timing. This was investigated in
+  `reports/2026-05/metrics/perf_inconsistency_20260528/perf_inconsistency_findings.md`.
+- The high-shard `~1.9 ms` case reproduced on both current HEAD and old
+  optimized commit `5e57e873`, then returned to `~1.0 ms` after explicitly
+  running the RX 7900 XTX as `--gpu 0`. Treat this as an AMD driver /
+  switchable-graphics / GPU performance-state measurement problem unless a
+  lower-level driver trace proves otherwise.
+- The `~40 ms` baseline is the scalar-Q1 baseline, not the old Q1-batched
+  `~30 ms` baseline. Do not compare those two as the same configuration.
+
 ## What was not adopted
 
 - Q2 naive request batching / subgroup batch claim was not adopted. It reduced some CAS pressure but amplified ready-spin and made clean duration worse.
